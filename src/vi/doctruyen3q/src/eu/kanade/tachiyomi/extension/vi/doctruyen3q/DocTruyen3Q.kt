@@ -13,12 +13,15 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 class DocTruyen3Q : WPComics(
     "DocTruyen3Q",
     "https://doctruyen3qk.pro",
     "vi",
-    dateFormat = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()),
+    dateFormat = SimpleDateFormat("dd-MM-yyyy", Locale.ROOT).apply {
+        timeZone = TimeZone.getTimeZone("Asia/Ho_Chi_Minh")
+    },
     gmtOffset = null,
 ) {
     override val client = super.client.newBuilder()
@@ -35,11 +38,11 @@ class DocTruyen3Q : WPComics(
     override fun popularMangaSelector() = "div.item-manga div.item"
 
     override fun popularMangaFromElement(element: Element) = SManga.create().apply {
-        element.select("h3 a").let {
+        element.selectFirst("h3 a")?.let {
             title = it.text()
             setUrlWithoutDomain(it.attr("abs:href"))
         }
-        thumbnail_url = imageOrNull(element.selectFirst("img")!!)
+        thumbnail_url = element.selectFirst("img")?.attr("abs:src")
     }
 
     override fun searchMangaSelector() = popularMangaSelector()
@@ -77,7 +80,7 @@ class DocTruyen3Q : WPComics(
 
     override fun chapterFromElement(element: Element): SChapter {
         return super.chapterFromElement(element).apply {
-            date_upload = element.select(".chapters + div").text().toDate()
+            date_upload = element.selectFirst(".chapters + div")?.text().toDate()
         }
     }
 
