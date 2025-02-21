@@ -1,4 +1,4 @@
-name: _CI
+name: CI
 
 on:
   push:
@@ -33,13 +33,13 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Java
-        uses: actions/setup-java@7a6d8a8234af8eb26422e24e3006232cccaa061b # v4.6.0
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
         with:
           java-version: 17
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@0bdd871935719febd78681f197cd39af5b6e16a6 # v4.2.2
+        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v4.3.0
 
       - name: Get last successful CI commit
         id: last_successful_ci_commit
@@ -62,13 +62,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Java
-        uses: actions/setup-java@7a6d8a8234af8eb26422e24e3006232cccaa061b # v4.6.0
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
         with:
           java-version: 17
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@0bdd871935719febd78681f197cd39af5b6e16a6 # v4.2.2
+        uses: gradle/actions/setup-gradle@94baf225fe0a508e581a564467443d0e2379123b # v4.3.0
         with:
           cache-read-only: ${{ matrix.chunk.number > 1 }}
 
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
-        if: "github.repository == 'FiorenMas/extensions-source'"
+        if: "github.repository == 'fiorenmas/extensions-source'"
         with:
           name: "individual-apks-${{ matrix.chunk.number }}"
           path: "**/*.apk"
@@ -98,7 +98,7 @@ jobs:
   publish:
     name: Publish extension repo
     needs: [prepare, build]
-    if: "github.repository == 'FiorenMas/extensions-source'"
+    if: "github.repository == 'fiorenmas/extensions-source'"
     runs-on: 'ubuntu-24.04'
     steps:
       - name: Download APK artifacts
@@ -107,7 +107,7 @@ jobs:
           path: ~/apk-artifacts
 
       - name: Set up JDK
-        uses: actions/setup-java@7a6d8a8234af8eb26422e24e3006232cccaa061b # v4.6.0
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
         with:
           java-version: 17
           distribution: temurin
@@ -130,7 +130,7 @@ jobs:
       - name: Checkout repo branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          repository: FiorenMas/extensions
+          repository: fiorenmas/extensions
           token: ${{ secrets.BOT_PAT }}
           ref: repo
           path: repo
