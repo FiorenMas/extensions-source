@@ -1,0 +1,92 @@
+name: Update VI Domains
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-vi-domains:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout keiyoushi/extensions-source
+        uses: actions/checkout@v4
+        with:
+          repository: keiyoushi/extensions-source
+          ref: main
+          path: repo
+          fetch-depth: 0
+
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: main
+          path: fork
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/scripts/update-domains.sh
+
+      - name: Update domains
+        env:
+          EXCLUDE: ${{ vars.EXCLUDE }}
+          PROXY_HOST: ${{ secrets.PROXY_HOST }}
+          PROXY_PORT: ${{ secrets.PROXY_PORT }}
+          PROXY_USER: ${{ secrets.PROXY_USER }}
+          PROXY_PASS: ${{ secrets.PROXY_PASS }}
+        run: |
+          cp fork/.github/scripts/update-domains.sh repo/.github/scripts/update-domains.sh
+          chmod +x repo/.github/scripts/update-domains.sh
+          cd repo
+          ./.github/scripts/update-domains.sh --root-path ./src/vi --timeout-sec 20
+
+      - name: Echo logs
+        if: always()
+        run: |
+          if [[ -f repo/src/vi/logs.txt ]]; then
+            echo "===== Begin logs ====="
+            cat repo/src/vi/logs.txt
+            echo "===== End logs ====="
+            rm -f repo/src/vi/logs.txt
+          else
+            echo "logs.txt not found."
+          fi
+
+      - name: Create branch, commit changes and push to fork
+        id: commit_push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd repo
+
+          BRANCH_NAME="$(date -u +'%H%M%S-%d%m%Y')"
+          git checkout -b "$BRANCH_NAME"
+
+          git config user.name "${{ github.repository_owner }}"
+          git config user.email "${{ github.repository_owner }}@users.noreply.github.com"
+
+          git add src/vi
+
+          if git diff --cached --quiet; then
+            echo "No changes detected in src/vi."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "Update some domains"
+          git remote add fork "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push fork "$BRANCH_NAME"
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          if [[ "${{ steps.commit_push.outputs.changed }}" == "true" ]]; then
+            echo "Pushed branch: ${{ steps.commit_push.outputs.branch_name }}"
+          else
+            echo "No commit was created."
+          fi
