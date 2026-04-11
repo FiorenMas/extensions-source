@@ -441,11 +441,153 @@ trim_text() {
     printf '%s' "$s"
 }
 
+single_line_text() {
+    local s="${1:-}"
+    s="${s//$'\r'/ }"
+    s="${s//$'\n'/ }"
+    s="${s//$'\t'/ }"
+    printf '%s' "$s"
+}
+
+append_file_line() {
+    local file_path="$1"
+    local text="$2"
+    printf '%s\n' "$text" >> "$file_path"
+}
+
+process_source() {
+    local source_name="$1"
+    local detail_file="$2"
+    local changed_file="$3"
+    local console_file="$4"
+
+    local source_dir="$RESOLVED_ROOT/$source_name"
+    local build_file="$source_dir/build.gradle"
+    local build_content=""
+
+    if [[ -f "$build_file" ]]; then
+        build_content="$(cat "$build_file" 2>/dev/null || true)"
+    fi
+
+    local main_kt_file target_kt_file
+    main_kt_file="$(get_main_kt_file_path "$source_dir" "$source_name" "$build_file")"
+    target_kt_file="$main_kt_file"
+
+    local old_url=""
+    if [[ -n "$build_content" ]]; then
+        old_url="$(printf '%s\n' "$build_content" | sed -nE "s/^[[:space:]]*baseUrl[[:space:]]*=[[:space:]]*['\"](https?:\\/\\/[^'\"]+)['\"].*$/\\1/p" | head -n1)"
+    fi
+
+    if [[ -z "$old_url" && -n "$main_kt_file" && -f "$main_kt_file" ]]; then
+        old_url="$(get_url_from_kt_file "$main_kt_file")"
+    fi
+
+    if [[ -z "$old_url" ]]; then
+        local fallback_result
+        fallback_result="$(find_url_in_source_kt_files "$source_dir" "$main_kt_file")"
+        if [[ -n "$fallback_result" ]]; then
+            old_url="${fallback_result%%$'\t'*}"
+            target_kt_file="${fallback_result#*$'\t'}"
+        fi
+    fi
+
+    if [[ -z "$old_url" ]]; then
+        append_file_line "$detail_file" "[SKIP] $source_name | No URL found in build.gradle or main kt file"
+        append_file_line "$console_file" "[SKIP] $source_name - no URL found"
+        return 0
+    fi
+
+    if ! resolve_redirect_info "$old_url" "$TIMEOUT_SEC"; then
+        local redirect_error
+        redirect_error="$(single_line_text "$REDIRECT_ERROR")"
+        append_file_line "$detail_file" "[ERROR] $source_name | connect failed for $old_url | $redirect_error"
+        append_file_line "$console_file" "[ERROR] $source_name - $redirect_error"
+        return 0
+    fi
+
+    if [[ "$REDIRECT_REDIRECTED" -ne 1 ]]; then
+        append_file_line "$detail_file" "[NO-REDIRECT] $source_name | $old_url"
+        append_file_line "$console_file" "[NO-REDIRECT] $source_name"
+        return 0
+    fi
+
+    local new_url
+    new_url="$(get_new_url_value "$old_url" "$REDIRECT_FINAL_URL")"
+    local -a changed_files=()
+
+    if update_build_gradle_url "$build_file" "$new_url"; then
+        changed_files+=("build.gradle")
+    fi
+
+    if update_kt_url "$target_kt_file" "$old_url" "$new_url"; then
+        local rel_path
+        rel_path="${target_kt_file#"$source_dir"/}"
+        changed_files+=("$rel_path")
+    fi
+
+    if [[ ${#changed_files[@]} -gt 0 ]]; then
+        update_version_code "$build_file"
+        if [[ "$VERSION_UPDATED" -eq 1 ]]; then
+            if ! array_contains "build.gradle" "${changed_files[@]}"; then
+                changed_files+=("build.gradle")
+            fi
+            append_file_line "$detail_file" "[VERSION] $source_name | $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
+            append_file_line "$console_file" "[VERSION] $source_name $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
+        elif [[ "$VERSION_MODE" == "not-found" ]]; then
+            append_file_line "$detail_file" "[VERSION-WARN] $source_name | build.gradle has no extVersionCode/overrideVersionCode to update"
+            append_file_line "$console_file" "[VERSION-WARN] $source_name - no extVersionCode/overrideVersionCode found"
+        elif [[ "$VERSION_MODE" == "no-build-file" ]]; then
+            append_file_line "$detail_file" "[VERSION-WARN] $source_name | no build.gradle found for version bump"
+            append_file_line "$console_file" "[VERSION-WARN] $source_name - no build.gradle found"
+        fi
+
+        printf '%s\t%s\t%s\n' "$source_name" "$old_url" "$new_url" >> "$changed_file"
+        append_file_line "$detail_file" "[CHANGED] $source_name | files: $(IFS=', '; echo "${changed_files[*]}")"
+        append_file_line "$console_file" "[CHANGED] $source_name => $new_url"
+    else
+        append_file_line "$detail_file" "[SKIP] $source_name | redirected $old_url -> $new_url but no matching value found to update"
+        append_file_line "$console_file" "[SKIP] $source_name - redirected but no file changes"
+    fi
+}
+
+wait_for_available_slot() {
+    local max_jobs="$1"
+    while true; do
+        reap_finished_jobs
+        if [[ ${#running_pids[@]} -lt "$max_jobs" ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+}
+
+reap_finished_jobs() {
+    local -a remaining_pids=()
+    local pid
+    for pid in "${running_pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            remaining_pids+=("$pid")
+        else
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    running_pids=("${remaining_pids[@]}")
+}
+
+wait_for_all_running_jobs() {
+    local pid
+    for pid in "${running_pids[@]}"; do
+        wait "$pid" || true
+    done
+    running_pids=()
+}
+
 declare -a sources
 mapfile -t sources < <(find "$RESOLVED_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
 
 declare -a detail_lines
 declare -a changed_entries
+declare -a console_lines
 declare -A excluded_sources
 
 if [[ -n "$EXCLUDE_RAW" ]]; then
@@ -462,96 +604,79 @@ if ! check_proxy_connection; then
 fi
 
 echo "Found ${#sources[@]} sources in $RESOLVED_ROOT"
+MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-16}"
+if ! [[ "$MAX_PARALLEL_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "WARN: MAX_PARALLEL_JOBS is invalid ($MAX_PARALLEL_JOBS), fallback to 16"
+    MAX_PARALLEL_JOBS=16
+fi
+echo "Running source checks in parallel (max jobs: $MAX_PARALLEL_JOBS)"
+
+WORK_DIR="$(mktemp -d)"
+cleanup_work_dir() {
+    rm -rf "$WORK_DIR"
+}
+trap cleanup_work_dir EXIT
+
+declare -a job_sources
+declare -a job_pids
+declare -a job_detail_files
+declare -a job_changed_files
+declare -a job_console_files
+declare -a running_pids
+job_index=0
 
 for source_name in "${sources[@]}"; do
     if [[ -n "${excluded_sources[$source_name]:-}" ]]; then
         detail_lines+=("[SKIP-EXCLUDED] $source_name | Listed in EXCLUDE input")
-        echo "[SKIP-EXCLUDED] $source_name"
+        console_lines+=("[SKIP-EXCLUDED] $source_name")
         continue
     fi
 
-    source_dir="$RESOLVED_ROOT/$source_name"
-    build_file="$source_dir/build.gradle"
-    build_content=""
+    wait_for_available_slot "$MAX_PARALLEL_JOBS"
 
-    if [[ -f "$build_file" ]]; then
-        build_content="$(cat "$build_file" 2>/dev/null || true)"
+    detail_file="$WORK_DIR/$job_index.detail"
+    changed_file="$WORK_DIR/$job_index.changed"
+    console_file="$WORK_DIR/$job_index.console"
+    : > "$detail_file"
+    : > "$changed_file"
+    : > "$console_file"
+
+    process_source "$source_name" "$detail_file" "$changed_file" "$console_file" &
+    pid="$!"
+    job_sources+=("$source_name")
+    job_pids+=("$pid")
+    running_pids+=("$pid")
+    job_detail_files+=("$detail_file")
+    job_changed_files+=("$changed_file")
+    job_console_files+=("$console_file")
+    job_index=$((job_index + 1))
+done
+
+wait_for_all_running_jobs
+
+for i in "${!job_sources[@]}"; do
+    if [[ -s "${job_detail_files[$i]}" ]]; then
+        while IFS= read -r line; do
+            detail_lines+=("$line")
+        done < "${job_detail_files[$i]}"
     fi
 
-    main_kt_file="$(get_main_kt_file_path "$source_dir" "$source_name" "$build_file")"
-    target_kt_file="$main_kt_file"
-
-    old_url=""
-    if [[ -n "$build_content" ]]; then
-        old_url="$(printf '%s\n' "$build_content" | sed -nE "s/^[[:space:]]*baseUrl[[:space:]]*=[[:space:]]*['\"](https?:\\/\\/[^'\"]+)['\"].*$/\\1/p" | head -n1)"
+    if [[ -s "${job_changed_files[$i]}" ]]; then
+        while IFS= read -r line; do
+            changed_entries+=("$line")
+        done < "${job_changed_files[$i]}"
     fi
 
-    if [[ -z "$old_url" && -n "$main_kt_file" && -f "$main_kt_file" ]]; then
-        old_url="$(get_url_from_kt_file "$main_kt_file")"
-    fi
-
-    if [[ -z "$old_url" ]]; then
-        fallback_result="$(find_url_in_source_kt_files "$source_dir" "$main_kt_file")"
-        if [[ -n "$fallback_result" ]]; then
-            old_url="${fallback_result%%$'\t'*}"
-            target_kt_file="${fallback_result#*$'\t'}"
-        fi
-    fi
-
-    if [[ -z "$old_url" ]]; then
-        detail_lines+=("[SKIP] $source_name | No URL found in build.gradle or main kt file")
-        echo "[SKIP] $source_name - no URL found"
-        continue
-    fi
-
-    if ! resolve_redirect_info "$old_url" "$TIMEOUT_SEC"; then
-        detail_lines+=("[ERROR] $source_name | connect failed for $old_url | $REDIRECT_ERROR")
-        echo "[ERROR] $source_name - $REDIRECT_ERROR"
-        continue
-    fi
-
-    if [[ "$REDIRECT_REDIRECTED" -ne 1 ]]; then
-        detail_lines+=("[NO-REDIRECT] $source_name | $old_url")
-        echo "[NO-REDIRECT] $source_name"
-        continue
-    fi
-
-    new_url="$(get_new_url_value "$old_url" "$REDIRECT_FINAL_URL")"
-    changed_files=()
-
-    if update_build_gradle_url "$build_file" "$new_url"; then
-        changed_files+=("build.gradle")
-    fi
-
-    if update_kt_url "$target_kt_file" "$old_url" "$new_url"; then
-        rel_path="${target_kt_file#"$source_dir"/}"
-        changed_files+=("$rel_path")
-    fi
-
-    if [[ ${#changed_files[@]} -gt 0 ]]; then
-        update_version_code "$build_file"
-        if [[ "$VERSION_UPDATED" -eq 1 ]]; then
-            if ! array_contains "build.gradle" "${changed_files[@]}"; then
-                changed_files+=("build.gradle")
-            fi
-            detail_lines+=("[VERSION] $source_name | $VERSION_MODE: $VERSION_OLD => $VERSION_NEW")
-            echo "[VERSION] $source_name $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
-        elif [[ "$VERSION_MODE" == "not-found" ]]; then
-            detail_lines+=("[VERSION-WARN] $source_name | build.gradle has no extVersionCode/overrideVersionCode to update")
-            echo "[VERSION-WARN] $source_name - no extVersionCode/overrideVersionCode found"
-        elif [[ "$VERSION_MODE" == "no-build-file" ]]; then
-            detail_lines+=("[VERSION-WARN] $source_name | no build.gradle found for version bump")
-            echo "[VERSION-WARN] $source_name - no build.gradle found"
-        fi
-
-        changed_entries+=("$source_name"$'\t'"$old_url"$'\t'"$new_url")
-        detail_lines+=("[CHANGED] $source_name | files: $(IFS=', '; echo "${changed_files[*]}")")
-        echo "[CHANGED] $source_name => $new_url"
-    else
-        detail_lines+=("[SKIP] $source_name | redirected $old_url -> $new_url but no matching value found to update")
-        echo "[SKIP] $source_name - redirected but no file changes"
+    if [[ -s "${job_console_files[$i]}" ]]; then
+        while IFS= read -r line; do
+            console_lines+=("$line")
+        done < "${job_console_files[$i]}"
     fi
 done
+
+if [[ ${#console_lines[@]} -gt 0 ]]; then
+    printf '%s\n' "${console_lines[@]}"
+fi
 
 {
     echo "Domain Update Summary"
