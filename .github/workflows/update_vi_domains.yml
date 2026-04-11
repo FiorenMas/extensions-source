@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  workflows: write
 
 jobs:
   update-vi-domains:
@@ -41,15 +42,17 @@ jobs:
           chmod +x repo/.github/scripts/update-domains.sh
           cd repo
           ./.github/scripts/update-domains.sh --root-path ./src/vi --timeout-sec 20
+          if [[ -f src/vi/logs.txt ]]; then
+            mv src/vi/logs.txt "${{ github.workspace }}/logs.txt"
+          fi
 
       - name: Echo logs
         if: always()
         run: |
-          if [[ -f repo/src/vi/logs.txt ]]; then
+          if [[ -f "${{ github.workspace }}/logs.txt" ]]; then
             echo "===== Begin logs ====="
-            cat repo/src/vi/logs.txt
+            cat "${{ github.workspace }}/logs.txt"
             echo "===== End logs ====="
-            rm -f repo/src/vi/logs.txt
           else
             echo "logs.txt not found."
           fi
@@ -67,6 +70,7 @@ jobs:
           git config user.name "${{ github.repository_owner }}"
           git config user.email "${{ github.repository_owner }}@users.noreply.github.com"
 
+          rm -f src/vi/logs.txt
           git add src/vi
 
           if git diff --cached --quiet; then
@@ -75,7 +79,21 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update some domains"
+          COMMIT_MSG_FILE="$(mktemp)"
+          if [[ -f "${{ github.workspace }}/logs.txt" ]]; then
+            awk '
+              /^## Changed Domains/ { in_block=1 }
+              /^## Details/ { in_block=0 }
+              in_block { print }
+            ' "${{ github.workspace }}/logs.txt" > "$COMMIT_MSG_FILE"
+          fi
+
+          if [[ ! -s "$COMMIT_MSG_FILE" ]]; then
+            echo "No commit message content extracted from ${{ github.workspace }}/logs.txt"
+            exit 1
+          fi
+
+          git commit -m "Update some domains" -F "$COMMIT_MSG_FILE"
           git remote add fork "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git push fork "$BRANCH_NAME"
 
