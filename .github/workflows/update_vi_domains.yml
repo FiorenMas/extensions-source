@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  permissions: write-all
 
 jobs:
   update-vi-domains:
@@ -27,7 +27,6 @@ jobs:
           path: fork
           fetch-depth: 1
           sparse-checkout: |
-            src/vi
             .github/scripts/update-domains.sh
 
       - name: Update domains
@@ -59,8 +58,10 @@ jobs:
 
       - name: Create branch, commit changes and push to fork
         id: commit_push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd fork
+          cd repo
 
           BRANCH_NAME="$(date -u +'%H%M%S-%d%m%Y')"
           git checkout -b "$BRANCH_NAME"
@@ -68,7 +69,6 @@ jobs:
           git config user.name "${{ github.repository_owner }}"
           git config user.email "${{ github.repository_owner }}@users.noreply.github.com"
 
-          rsync -a --delete ../repo/src/vi/ src/vi/
           rm -f src/vi/logs.txt
           git add src/vi
 
@@ -93,7 +93,8 @@ jobs:
           fi
 
           git commit -m "Update some domains" -F "$COMMIT_MSG_FILE"
-          git push origin "$BRANCH_NAME"
+          git remote add fork "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push fork "$BRANCH_NAME"
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
