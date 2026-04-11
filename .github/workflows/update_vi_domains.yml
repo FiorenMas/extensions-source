@@ -3,8 +3,7 @@ name: Update VI Domains
 on:
   workflow_dispatch:
 
-permissions:
-  permissions: write-all
+permissions: write-all
 
 jobs:
   update-vi-domains:
