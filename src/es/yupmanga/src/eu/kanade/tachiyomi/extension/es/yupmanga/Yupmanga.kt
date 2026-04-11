@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.es.yupmanga
 
+import app.cash.quickjs.QuickJs
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -34,6 +35,7 @@ class Yupmanga : HttpSource() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
+        .add("x-requested-with", "XMLHttpRequest")
 
     override fun popularMangaRequest(page: Int) = GET("$baseUrl/top", headers)
 
@@ -138,29 +140,52 @@ class Yupmanga : HttpSource() {
     }
 
     private fun parseChapterList(document: Document): List<SChapter> = document.select("div.comic-card").map { element ->
+        val totalPages = element.selectFirst("span")!!.text()
+        val chapterId = element.selectFirst("a[data-chapter]")!!.attr("data-chapter")
+
         SChapter.create().apply {
             name = element.selectFirst("h3")!!.text()
-            setUrlWithoutDomain(element.selectFirst("> a[href]")!!.attr("abs:href"))
+            url = "/ajax/get_reader_token.php?chapter=$chapterId#$totalPages"
         }
     }
 
-    private val totalPagesRegex = """totalPages: (\d*)""".toRegex()
+    override fun pageListRequest(chapter: SChapter): Request {
+        val chapterUrl = "$baseUrl${chapter.url}".toHttpUrl()
+        val chapterId = chapterUrl.queryParameter("chapter")
+        val challenge = client.newCall(GET("$baseUrl/ajax/get_challenge.php?chapter=$chapterId", headers)).execute().parseAs<ChallengeDto>()
+
+        val chapterTokenUrl = chapterUrl.newBuilder().apply {
+            if (challenge.success) {
+                val answer = QuickJs.create().use {
+                    it.evaluate("(function(){ ${challenge.challenge_js} })()")?.toString()
+                }
+
+                if (answer != null) {
+                    addQueryParameter("challenge_id", challenge.challenge_id)
+                    addQueryParameter("answer", answer)
+                }
+            }
+        }.build()
+
+        return GET(chapterTokenUrl, headers)
+    }
 
     override fun pageListParse(response: Response): List<Page> {
-        val chapterId = response.request.url.queryParameter("chapter")
-        val token = response.request.url.queryParameter("token")
-        if (token.isNullOrEmpty() || chapterId.isNullOrEmpty()) {
+        val httpUrl = response.request.url
+        val chapterId = httpUrl.queryParameter("chapter")!!
+
+        val token = response.parseAs<TokenDto>()
+        if (!token.success || chapterId.isNullOrEmpty()) {
             throw Exception("Información desactualizada. Refresque la lista de capítulos.")
         }
-        val document = response.asJsoup()
-        val script = document.select("script:containsData(totalPages)").joinToString("\n")
-        val totalPages = totalPagesRegex.find(script)?.groupValues?.get(1)?.toInt()!!
+        val totalPages = httpUrl.fragment!!.toInt()
+
         return (1..totalPages).map { pageNumber ->
             val imageUrl = "$baseUrl/image-proxy-v2.php".toHttpUrl().newBuilder()
                 .addQueryParameter("chapter", chapterId)
                 .addQueryParameter("page", pageNumber.toString())
                 .addQueryParameter("context", "reader")
-                .addQueryParameter("token", token)
+                .addQueryParameter("token", token.token)
                 .build()
 
             Page(pageNumber, imageUrl = imageUrl.toString())
@@ -177,4 +202,17 @@ class Yupmanga : HttpSource() {
     ) {
         fun hasNextPage() = currentPage < totalPages
     }
+
+    @Serializable
+    internal class TokenDto(
+        val success: Boolean,
+        val token: String,
+    )
+
+    @Serializable
+    internal class ChallengeDto(
+        val success: Boolean,
+        val challenge_id: String,
+        val challenge_js: String,
+    )
 }
