@@ -604,7 +604,7 @@ if ! check_proxy_connection; then
 fi
 
 echo "Found ${#sources[@]} sources in $RESOLVED_ROOT"
-MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-16}"
+MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-${#sources[@]}}"
 if ! [[ "$MAX_PARALLEL_JOBS" =~ ^[1-9][0-9]*$ ]]; then
     echo "WARN: MAX_PARALLEL_JOBS is invalid ($MAX_PARALLEL_JOBS), fallback to 16"
     MAX_PARALLEL_JOBS=16
@@ -618,7 +618,6 @@ cleanup_work_dir() {
 trap cleanup_work_dir EXIT
 
 declare -a job_sources
-declare -a job_pids
 declare -a job_detail_files
 declare -a job_changed_files
 declare -a job_console_files
@@ -644,7 +643,6 @@ for source_name in "${sources[@]}"; do
     process_source "$source_name" "$detail_file" "$changed_file" "$console_file" &
     pid="$!"
     job_sources+=("$source_name")
-    job_pids+=("$pid")
     running_pids+=("$pid")
     job_detail_files+=("$detail_file")
     job_changed_files+=("$changed_file")

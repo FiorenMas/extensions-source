@@ -91,7 +91,14 @@ jobs:
             exit 1
           fi
 
-          git commit -m "Update some domains" -F "$COMMIT_MSG_FILE"
+          FULL_COMMIT_MSG_FILE="$(mktemp)"
+          {
+            echo "Update some domains"
+            echo
+            cat "$COMMIT_MSG_FILE"
+          } > "$FULL_COMMIT_MSG_FILE"
+
+          git commit -F "$FULL_COMMIT_MSG_FILE"
           git remote add fork "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git push fork "$BRANCH_NAME"
 
