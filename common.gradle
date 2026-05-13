@@ -58,19 +58,33 @@ android {
         }
     }
 
+    lintOptions {
+        checkReleaseBuilds false
+    }
+
     signingConfigs {
         release {
             storeFile = rootProject.file("signingkey.jks")
-            storePassword = System.getenv("KEY_STORE_PASSWORD")
-            keyAlias = System.getenv("ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
+            storePassword = providers.environmentVariable("KEY_STORE_PASSWORD").orNull
+            keyAlias = providers.environmentVariable("ALIAS").orNull
+            keyPassword = providers.environmentVariable("KEY_PASSWORD").orNull
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.release
-            minifyEnabled = false
+            signingConfig = rootProject.file("signingkey.jks").exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
+            minifyEnabled = true
+            proguardFiles(
+                rootProject.file("proguard-rules.pro"),
+                layout.buildDirectory.file("generated-proguard-rules.pro").get().asFile
+            )
+            File proguardFile = file("proguard-rules.pro")
+            if (proguardFile.exists()) {
+                proguardFiles(proguardFile)
+            }
             vcsInfo.include = false
         }
     }
@@ -109,11 +123,22 @@ tasks.register("copyManifestFile", Copy) {
 
 tasks.register("writeManifestFile") {
     dependsOn(copyManifestFile)
+    File tempFile = android.sourceSets.getByName('main').manifest.srcFile
     doLast {
-        File tempFile = android.sourceSets.getByName('main').manifest.srcFile
         if (!tempFile.exists()) {
             tempFile.parentFile.mkdirs()
             tempFile.write('<?xml version="1.0" encoding="utf-8"?>\n<manifest />\n')
+        }
+    }
+}
+
+tasks.register("writeProguardFile") {
+    File proguardFile = layout.buildDirectory.file("generated-proguard-rules.pro").get().asFile
+    String extClassPath = "${android.namespace}.${android.defaultConfig.applicationIdSuffix}${extClass}"
+    doLast {
+        proguardFile.parentFile.mkdirs()
+        proguardFile.withWriter {
+            it.writeLine("-keep class $extClassPath { <init>(); }")
         }
     }
 }
@@ -127,4 +152,4 @@ afterEvaluate {
     }
 }
 
-preBuild.dependsOn(writeManifestFile)
+preBuild.dependsOn(writeManifestFile, writeProguardFile)

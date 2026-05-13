@@ -1,9 +1,7 @@
 ext {
-    extName = 'greed scans'
+    extName = 'Greed Scans'
     extClass = '.GreedScans'
-    themePkg = 'mangathemesia'
-    baseUrl = 'https://greedscans.com'
-    overrideVersionCode = 0
+    extVersionCode = 32
     isNsfw = false
 }
 

@@ -2,72 +2,91 @@ package eu.kanade.tachiyomi.extension.id.astralscans
 
 import android.util.Base64
 import eu.kanade.tachiyomi.multisrc.mangathemesia.MangaThemesia
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.source.model.SChapter
-import eu.kanade.tachiyomi.util.asJsoup
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import eu.kanade.tachiyomi.source.model.SManga
+import okhttp3.MultipartBody
+import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
 class AstralScans : MangaThemesia("Astral Scans", "https://astralscans.top", "id") {
 
     override val hasProjectPage = true
 
+    override fun chapterListRequest(manga: SManga): Request {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("manga_req", "ping")
+            .build()
+
+        return POST(
+            url = baseUrl + manga.url,
+            headers = headersBuilder()
+                .add("X-Requested-With", "XMLHttpRequest")
+                .build(),
+            body = body,
+        )
+    }
+
     override fun chapterListParse(response: Response): List<SChapter> {
-        val document = response.asJsoup()
+        val responseString = response.body.string()
 
-        // Find the script containing the anti-scraper Base64 JSON payload
-        val script = document.select("script").find { it.data().contains("rawPayload") }?.data()
+        if (responseString.startsWith("ASTRAL_")) {
+            val parts = responseString.split("|||")
 
-        if (script != null) {
-            val payloadRegex = """rawPayload\s*=\s*['"]([^'"]+)['"]""".toRegex()
-            val match = payloadRegex.find(script)
-
-            if (match != null) {
+            if (parts.size >= 3) {
                 try {
-                    val rawPayload = match.groupValues[1]
-                    val jsonString = String(Base64.decode(rawPayload, Base64.DEFAULT), Charsets.UTF_8)
-                    val jsonArray = Json.parseToJsonElement(jsonString).jsonArray
+                    val rawHtml = String(Base64.decode(parts[1], Base64.DEFAULT), Charsets.UTF_8)
+                    val dynamicDataAttr = parts[2]
 
-                    val chapters = jsonArray.map { element ->
-                        val obj = element.jsonObject
+                    val document = Jsoup.parse(rawHtml)
+                    val chapters = document.select("[$dynamicDataAttr]").mapNotNull { element ->
+                        val isTrap = element.hasClass("trap") ||
+                            element.attr("class").contains("trap") ||
+                            element.closest("[class*=trap]") != null
+
+                        if (isTrap) {
+                            return@mapNotNull null
+                        }
+
                         SChapter.create().apply {
-                            // The URL is Base64-encoded and the resulting string is reversed
-                            val uBase64 = obj["u"]?.jsonPrimitive?.content ?: ""
-                            val decodedUrl = String(Base64.decode(uBase64, Base64.DEFAULT), Charsets.UTF_8).reversed()
-                            setUrlWithoutDomain(decodedUrl)
+                            val encodedUrl = element.attr(dynamicDataAttr)
+                            val chapterUrl = String(Base64.decode(encodedUrl, Base64.DEFAULT), Charsets.UTF_8)
+                            setUrlWithoutDomain(chapterUrl)
 
-                            val chapNum = obj["n"]?.jsonPrimitive?.content ?: ""
-                            val title = obj["t"]?.jsonPrimitive?.content ?: ""
-                            name = "Chapter $chapNum" + if (title.isNotBlank()) " - $title" else ""
-
-                            val dateStr = obj["d"]?.jsonPrimitive?.content
-                            date_upload = dateStr.parseChapterDate()
+                            name = element.selectFirst("span[class^=n_]")?.text() ?: "Chapter"
+                            date_upload = element.selectFirst("span[class^=d_]")?.text()?.parseChapterDate() ?: 0L
                         }
                     }
 
                     if (chapters.isNotEmpty()) {
                         return chapters
                     }
-                } catch (e: Exception) {
-                    // Fallback to old DOM parsing if JSON extraction or parsing fails
-                }
+                } catch (_: Exception) {}
             }
         }
 
-        // Old DOM fallback
+        // Fallback: If site reverts to standard MangaThemesia DOM elements
+        val document = Jsoup.parse(responseString, response.request.url.toString())
         return document.select(chapterListSelector()).map { chapterFromElement(it) }
     }
 
-    override fun chapterListSelector() = "div#kumpulan-bab-area .astral-item"
+    override fun chapterListSelector() = "div#kumpulan-bab-area .astral-item, div.eplister li"
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
+        val urlElement = element.selectFirst("a")
         val dataU = element.selectFirst(".js-link")?.attr("data-u") ?: ""
-        val decoded = if (dataU.isNotEmpty()) String(Base64.decode(dataU, Base64.DEFAULT), Charsets.UTF_8) else ""
-        setUrlWithoutDomain(decoded)
-        name = element.selectFirst(".ch-title")?.text() ?: ""
-        date_upload = element.selectFirst(".ch-date")?.text().parseChapterDate()
+
+        if (dataU.isNotEmpty()) {
+            val decoded = String(Base64.decode(dataU, Base64.DEFAULT), Charsets.UTF_8)
+            setUrlWithoutDomain(decoded)
+        } else {
+            setUrlWithoutDomain(urlElement?.attr("href") ?: "")
+        }
+
+        name = element.selectFirst(".ch-title, .epl-num, .chapternum")?.text() ?: ""
+        date_upload = element.selectFirst(".ch-date, .chapterdate")?.text()?.parseChapterDate() ?: 0L
     }
 }

@@ -3,10 +3,9 @@ package eu.kanade.tachiyomi.extension.all.hentaiera
 import eu.kanade.tachiyomi.multisrc.galleryadults.GalleryAdults
 import eu.kanade.tachiyomi.multisrc.galleryadults.Genre
 import eu.kanade.tachiyomi.multisrc.galleryadults.SearchFlagFilter
+import eu.kanade.tachiyomi.multisrc.galleryadults.SortOrderFilter
 import eu.kanade.tachiyomi.multisrc.galleryadults.imgAttr
-import eu.kanade.tachiyomi.multisrc.galleryadults.toBinary
-import eu.kanade.tachiyomi.network.GET
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import eu.kanade.tachiyomi.source.model.FilterList
 import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -31,25 +30,40 @@ class HentaiEra(
         .removeSuffix("/").substringAfterLast("/")
         .let {
             // Include Speechless in search results
-            if (it == LANGUAGE_SPEECHLESS) mangaLang else it
+            if (it == LANGUAGE_SPEECHLESS) mangaLang else null
         }
+        ?: selectFirst(".g_flag")?.classNames()
+            ?.firstOrNull { it.startsWith("flag-") }
+            ?.substringAfter("flag-")
+            ?.let { langFlags[it] }
+        ?: mangaLang
 
-    override fun popularMangaRequest(page: Int): Request {
-        // Only for query string or multiple tags
-        val url = "$baseUrl/search/".toHttpUrl().newBuilder().apply {
-            addQueryParameter("pp", "1")
-
-            getLanguageURIs().forEach { pair ->
-                addQueryParameter(
-                    pair.second,
-                    toBinary(mangaLang == pair.first || mangaLang == LANGUAGE_MULTI),
-                )
+    private val langFlags by lazy {
+        getLanguageURIs()
+            .associateBy({ it.second }, { it.first })
+            .toMutableMap()
+            .apply {
+                // Keep the existing English flag alias in case the site uses `flag-us`
+                if (!containsKey("us")) {
+                    put("us", LANGUAGE_ENGLISH)
+                }
             }
+    }
 
-            addPageUri(page)
+    override fun popularMangaRequest(page: Int): Request = if (mangaLang.isBlank()) {
+        // Popular browsing for LANGUAGE_MULTI
+        val popularFilter = SortOrderFilter(getSortOrderURIs())
+            .apply {
+                state = 0
+            }
+        if (useBasicSearch) {
+            basicSearchRequest(page, "", FilterList(popularFilter))
+        } else {
+            searchMangaRequest(page, "", FilterList(popularFilter))
         }
-
-        return GET(url.build(), headers)
+    } else {
+        // Popular browsing for other languages: using source's popular page
+        super.popularMangaRequest(page)
     }
 
     /* Details */
@@ -72,10 +86,11 @@ class HentaiEra(
 
     override fun Element.getCover() = selectFirst(".left_cover img")?.imgAttr()
 
-    override fun tagsParser(document: Document): List<Genre> = document.select("h2.gallery_title a")
+    /* Filters */
+    override fun tagsParser(document: Document): List<Genre> = document.select(".galleries .gallery_title a")
         .mapNotNull {
             Genre(
-                it.text(),
+                it.ownText(),
                 it.attr("href")
                     .removeSuffix("/").substringAfterLast('/'),
             )

@@ -10,10 +10,11 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.cryptoaes.CryptoAES
 import keiyoushi.lib.i18n.Intl
+import keiyoushi.utils.decodeHex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,7 +40,7 @@ abstract class Madara(
     override val baseUrl: String,
     final override val lang: String,
     protected val dateFormat: SimpleDateFormat = SimpleDateFormat("MMMM dd, yyyy", Locale.US),
-) : ParsedHttpSource() {
+) : HttpSource() {
 
     override val supportsLatest = true
 
@@ -162,12 +163,12 @@ abstract class Madara(
     }
 
     // exclude/filter bilibili manga from list
-    override fun popularMangaSelector() = "div.page-item-detail:not(:has(a[href*='bilibilicomics.com']))$mangaEntrySelector , .manga__item"
+    protected open fun popularMangaSelector() = "div.page-item-detail:not(:has(a[href*='bilibilicomics.com']))$mangaEntrySelector , .manga__item"
 
     open val popularMangaUrlSelector = "div.post-title a"
     open val popularMangaUrlSelectorImg = "img"
 
-    override fun popularMangaFromElement(element: Element): SManga {
+    protected open fun popularMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
 
         with(element) {
@@ -190,17 +191,36 @@ abstract class Madara(
         GET("$baseUrl/$mangaSubString/${searchPage(page)}?m_orderby=views", headers)
     }
 
-    override fun popularMangaNextPageSelector(): String? = if (useLoadMoreRequest()) {
+    protected open fun popularMangaNextPageSelector(): String? = if (useLoadMoreRequest()) {
         "body:not(:has(.no-posts))"
     } else {
         "div.nav-previous, nav.navigation-ajax, a.nextpostslink"
     }
 
+    // Related Manga
+    protected open fun relatedMangaSelector() = ".related-reading-wrap"
+
+    override fun relatedMangaListParse(response: Response): List<SManga> {
+        val document = response.asJsoup()
+        return document.select(relatedMangaSelector())
+            .mapNotNull { manga ->
+                SManga.create().apply {
+                    manga.selectFirst(".widget-title a")?.let {
+                        setUrlWithoutDomain(it.attr("abs:href"))
+                        title = it.ownText()
+                    } ?: return@mapNotNull null
+                    manga.selectFirst(".widget-thumbnail img")?.let {
+                        thumbnail_url = processThumbnail(imageFromElement(it), true)
+                    }
+                }
+            }
+    }
+
     // Latest Updates
 
-    override fun latestUpdatesSelector() = popularMangaSelector()
+    protected open fun latestUpdatesSelector() = popularMangaSelector()
 
-    override fun latestUpdatesFromElement(element: Element): SManga {
+    protected open fun latestUpdatesFromElement(element: Element): SManga {
         // Even if it's different from the popular manga's list, the relevant classes are the same
         return popularMangaFromElement(element)
     }
@@ -211,7 +231,7 @@ abstract class Madara(
         GET("$baseUrl/$mangaSubString/${searchPage(page)}?m_orderby=latest", headers)
     }
 
-    override fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
+    protected open fun latestUpdatesNextPageSelector(): String? = popularMangaNextPageSelector()
 
     override fun latestUpdatesParse(response: Response): MangasPage {
         val mp = popularMangaParse(response)
@@ -241,6 +261,17 @@ abstract class Madara(
     // Search Manga
 
     override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
+        if (query.startsWith("https://")) {
+            val url = query.toHttpUrl()
+            if (url.host != baseUrl.toHttpUrl().host) {
+                throw Exception("Unsupported url")
+            }
+            if (url.pathSegments.size < 2) {
+                throw Exception("Unsupported url")
+            }
+            val slug = url.pathSegments[1]
+            return fetchSearchManga(page, "$URL_SEARCH_PREFIX$slug", filters)
+        }
         if (query.startsWith(URL_SEARCH_PREFIX)) {
             val mangaUrl = baseUrl.toHttpUrl().newBuilder().apply {
                 addPathSegment(mangaSubString)
@@ -604,11 +635,11 @@ abstract class Madara(
         return MangasPage(entries, hasNextPage)
     }
 
-    override fun searchMangaSelector() = "div.c-tabs-item__content , .manga__item"
+    protected open fun searchMangaSelector() = "div.c-tabs-item__content , .manga__item"
 
     protected open val searchMangaUrlSelector = "div.post-title a"
 
-    override fun searchMangaFromElement(element: Element): SManga {
+    protected open fun searchMangaFromElement(element: Element): SManga {
         val manga = SManga.create()
 
         with(element) {
@@ -624,7 +655,7 @@ abstract class Madara(
         return manga
     }
 
-    override fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
+    protected open fun searchMangaNextPageSelector() = popularMangaNextPageSelector()
 
     // Manga Details Parse
 
@@ -681,7 +712,9 @@ abstract class Madara(
         "Annulé",
     )
 
-    override fun mangaDetailsParse(document: Document): SManga {
+    override fun mangaDetailsParse(response: Response): SManga = mangaDetailsParse(response.asJsoup())
+
+    protected open fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
         with(document) {
             manga.title = selectFirst(mangaDetailsSelectorTitle)!!.ownText()
@@ -783,6 +816,7 @@ abstract class Madara(
         element.hasAttr("data-lazy-src") -> element.attr("abs:data-lazy-src")
         element.hasAttr("srcset") -> element.attr("abs:srcset").getSrcSetImage()
         element.hasAttr("data-cfsrc") -> element.attr("abs:data-cfsrc")
+        element.hasAttr("data-manga-src") -> element.attr("abs:data-manga-src")
         else -> element.attr("abs:src")
     }
 
@@ -860,7 +894,7 @@ abstract class Madara(
         return chapterElements.map(::chapterFromElement)
     }
 
-    override fun chapterListSelector() = "li.wp-manga-chapter"
+    protected open fun chapterListSelector() = "li.wp-manga-chapter"
 
     protected open fun chapterDateSelector() = "span.chapter-release-date"
 
@@ -869,7 +903,7 @@ abstract class Madara(
     // can cause some issue for some site. blocked by cloudflare when opening the chapter pages
     open val chapterUrlSuffix = "?style=list"
 
-    override fun chapterFromElement(element: Element): SChapter {
+    protected open fun chapterFromElement(element: Element): SChapter {
         val chapter = SChapter.create()
 
         with(element) {
@@ -989,7 +1023,9 @@ abstract class Madara(
     open val chapterProtectorPasswordPrefix = "wpmangaprotectornonce='"
     open val chapterProtectorDataPrefix = "chapter_data='"
 
-    override fun pageListParse(document: Document): List<Page> {
+    override fun pageListParse(response: Response): List<Page> = pageListParse(response.asJsoup())
+
+    protected open fun pageListParse(document: Document): List<Page> {
         launchIO { countViews(document) }
 
         val chapterProtector = document.selectFirst(chapterProtectorSelector)
@@ -1027,7 +1063,7 @@ abstract class Madara(
 
     override fun imageRequest(page: Page): Request = GET(page.imageUrl!!, headers.newBuilder().set("Referer", page.url).build())
 
-    override fun imageUrlParse(document: Document) = ""
+    override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
 
     /**
      * Set it to false if you want to disable the extension reporting the view count
@@ -1123,15 +1159,6 @@ abstract class Madara(
                 li.selectFirst("input[type=checkbox]")!!.`val`(),
             )
         }
-
-    // https://stackoverflow.com/a/66614516
-    protected fun String.decodeHex(): ByteArray {
-        check(length % 2 == 0) { "Must have an even length" }
-
-        return chunked(2)
-            .map { it.toInt(16).toByte() }
-            .toByteArray()
-    }
 
     protected val salted = "Salted__".toByteArray(Charsets.UTF_8)
 

@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.firstInstanceOrNull
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl
@@ -146,10 +147,10 @@ class HentaiFox(
     override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
         // Sidebar mangas should always override any other search, so they should appear first
         // and only propagate to super when a "normal" search is issued
-        val sortOrderFilter = filters.filterIsInstance<SortOrderFilter>().firstOrNull()
+        val sortOrderFilter = filters.firstInstanceOrNull<SortOrderFilter>()
 
         sortOrderFilter?.let {
-            val selectedCategory = sortOrderFilter.values.get(sortOrderFilter.state)
+            val selectedCategory = sortOrderFilter.values[sortOrderFilter.state]
             if (sidebarCategoriesFilterStateMap.containsKey(selectedCategory)) {
                 return sidebarRequest(
                     sidebarCategoriesFilterStateMap.getValue(selectedCategory),
@@ -174,10 +175,10 @@ class HentaiFox(
         if (response.request.url.encodedPath.endsWith(sidebarPath)) {
             val document = response.asJsoup()
             val mangas = document.select(sidebarMangaSelector())
-                .map {
+                .mapNotNull {
                     SMangaDto(
-                        title = it.sidebarMangaTitle()!!,
-                        url = it.sidebarMangaUrl()!!,
+                        title = it.sidebarMangaTitle() ?: return@mapNotNull null,
+                        url = it.sidebarMangaUrl() ?: return@mapNotNull null,
                         thumbnail = it.sidebarMangaThumbnail(),
                         lang = LANGUAGE_MULTI,
                     )

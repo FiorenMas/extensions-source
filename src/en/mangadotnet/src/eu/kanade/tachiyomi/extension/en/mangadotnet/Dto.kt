@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.en.mangadotnet
 
 import eu.kanade.tachiyomi.source.model.SManga
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonNames
@@ -67,6 +68,17 @@ class MangaData(
 }
 
 @Serializable
+class RelatedData(
+    val suggestions: List<BrowseManga> = emptyList(),
+    val relationsData: RelationsData? = null,
+) {
+    @Serializable
+    class RelationsData(
+        val relations: Map<String, List<BrowseManga>> = emptyMap(),
+    )
+}
+
+@Serializable
 class Manga(
     private val id: Int,
     private val title: String,
@@ -85,6 +97,16 @@ class Manga(
     private val rating: Float? = null,
     @SerialName("anilist_id")
     private val anilistID: Long? = null,
+    @SerialName("mangaupdates_id")
+    private val mangaupdatesID: String? = null,
+    @SerialName("mangabaka_id")
+    private val mangabakaID: Long? = null,
+    @SerialName("mal_id")
+    private val malID: Long? = null,
+    @SerialName("kitsu_id")
+    private val kitsuID: Long? = null,
+    private val authors: String? = null,
+    private val artists: String? = null,
 ) {
     fun toSManga(baseUrl: String) = SManga.create().apply {
         url = id.toString()
@@ -97,6 +119,12 @@ class Manga(
             } else {
                 null
             }
+        }
+        author = authors?.let {
+            runCatching { it.parseAs<List<String>>().joinToString() }.getOrNull()
+        }
+        artist = artists?.let {
+            runCatching { it.parseAs<List<String>>().joinToString() }.getOrNull()
         }
         genre = buildList {
             when (this@Manga.origin) {
@@ -134,6 +162,10 @@ class Manga(
 
             listOfNotNull(
                 anilistID?.let { "[AniList](https://anilist.co/manga/$it)" },
+                mangaupdatesID?.let { "[MangaUpdates](https://mangaupdates.com/series/$it)" },
+                mangabakaID?.let { "[MangaBaka](https://mangabaka.org/$it)" },
+                malID?.let { "[MyAnimeList](https://myanimelist.net/manga/$it)" },
+                kitsuID?.let { "[Kitsu](https://kitsu.app/manga/$it)" },
                 sourceUrl?.let { "[Source]($it)" },
             ).also { links ->
                 if (links.isNotEmpty()) {
@@ -160,9 +192,9 @@ class Chapter(
     val id: String,
     val source: String,
     @SerialName("chapter_number")
-    val number: String,
+    val number: String? = null,
     @SerialName("chapter_title")
-    val name: String,
+    val name: String? = null,
     @SerialName("group_name")
     val group: String? = null,
     @SerialName("scanlator_name")
@@ -175,7 +207,7 @@ class Chapter(
 class Volume(
     val id: Int,
     @SerialName("volume_number")
-    val volume: Float,
+    val volume: Float? = null,
     @SerialName("group_name")
     val group: String? = null,
     @SerialName("scanlator_name")
