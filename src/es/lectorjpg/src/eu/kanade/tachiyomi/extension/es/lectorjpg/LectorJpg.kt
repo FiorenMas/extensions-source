@@ -32,11 +32,11 @@ class LectorJpg : HttpSource() {
 
     override val baseUrl = "https://visorjpg.lat"
 
-    private val apiUrl = "https://panel.visorjpg.lat"
+    private val apiUrl = "https://api.visorjpg.lat"
 
     override val supportsLatest = true
 
-    override val client = network.cloudflareClient.newBuilder()
+    override val client = network.client.newBuilder()
         .rateLimitHost(baseUrl.toHttpUrl(), 3, 1)
         .build()
 
@@ -49,7 +49,7 @@ class LectorJpg : HttpSource() {
     private val latestMangaCursor = LimitedCache<Int, String?>()
     private val searchMangaCursor = LimitedCache<SearchKey, String?>()
 
-    override fun popularMangaRequest(page: Int): Request = GET("$apiUrl/front/home/trending", headers)
+    override fun popularMangaRequest(page: Int): Request = GET("$apiUrl/home/trending", headers)
 
     override fun popularMangaParse(response: Response): MangasPage {
         val result = response.parseAs<SeriesQueryDto>()
@@ -59,7 +59,7 @@ class LectorJpg : HttpSource() {
 
     override fun latestUpdatesRequest(page: Int): Request {
         val cursor = latestMangaCursor[page - 1] ?: createLatestCursor()
-        val url = "$apiUrl/front/home/lastest-updates".toHttpUrl().newBuilder()
+        val url = "$apiUrl/home/lastest-updates".toHttpUrl().newBuilder()
             .addQueryParameter("cursor", cursor)
             .fragment(page.toString())
 
@@ -84,7 +84,7 @@ class LectorJpg : HttpSource() {
         val searchKey = SearchKey(page - 1, query, genresParam)
 
         val cursor = searchMangaCursor[searchKey] ?: ""
-        val url = "$apiUrl/front/search".toHttpUrl().newBuilder()
+        val url = "$apiUrl/search".toHttpUrl().newBuilder()
             .addQueryParameter("cursor", cursor)
             .addQueryParameter("name", query)
             .fragment(page.toString())
@@ -139,11 +139,15 @@ class LectorJpg : HttpSource() {
         }
     }
 
+    private val pagesRegex = """images:(\[.*?])""".toRegex()
+
     override fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
-        return document.select("div.grid > img").mapIndexed { i, element ->
-            Page(i, imageUrl = element.attr("abs:src"))
-        }
+        val scripts = document.select("script:containsData(svelteKit)").joinToString("\n") { it.data() }
+        val match = pagesRegex.find(scripts) ?: return emptyList()
+        val pagesJson = match.groupValues[1]
+        val imageUrls = pagesJson.parseAs<List<String>>()
+        return imageUrls.mapIndexed { i, url -> Page(i, imageUrl = url) }
     }
 
     override fun imageUrlParse(response: Response) = throw UnsupportedOperationException()
