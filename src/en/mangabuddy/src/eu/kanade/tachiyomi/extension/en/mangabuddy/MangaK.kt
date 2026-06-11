@@ -122,7 +122,10 @@ class MangaK :
             addQueryParameter("limit", "24")
 
             if (query.isNotBlank()) {
-                addQueryParameter("q", query)
+                val filteredQuery = query
+                    .filter { it.isLetterOrDigit() || it == ' ' }
+                    .take(50)
+                addQueryParameter("q", filteredQuery)
             }
 
             val includedGenres = mutableListOf<String>()
@@ -138,7 +141,11 @@ class MangaK :
                             }
                         }
                     }
-                    is SortFilter -> addQueryParameter("sort", filter.selected)
+                    is SortFilter -> {
+                        if (filter.selected.isNotBlank()) {
+                            addQueryParameter("sort", filter.selected)
+                        }
+                    }
                     is ContentRatingFilter -> {
                         if (filter.selected.isNotBlank()) {
                             addQueryParameter("content_rating", filter.selected)
@@ -185,7 +192,12 @@ class MangaK :
 
     // ============================== Details ==============================
 
-    override fun getMangaUrl(manga: SManga): String = baseUrl + manga.url.substringBefore("#")
+    override fun getMangaUrl(manga: SManga): String {
+        val path = manga.url.substringBefore("#")
+        // `path` may be relative or already absolute depending on the API response,
+        // so resolve it against baseUrl instead of blindly concatenating.
+        return baseUrl.toHttpUrl().resolve(path)?.toString() ?: (baseUrl + path)
+    }
 
     override fun mangaDetailsRequest(manga: SManga): Request = GET(getMangaUrl(manga), headers)
 
@@ -200,7 +212,9 @@ class MangaK :
 
     // ============================= Chapters ==============================
 
-    override fun getChapterUrl(chapter: SChapter): String = baseUrl + chapter.url
+    // `chapter.url` may be relative or already absolute depending on the API response,
+    // so resolve it against baseUrl instead of blindly concatenating.
+    override fun getChapterUrl(chapter: SChapter): String = baseUrl.toHttpUrl().resolve(chapter.url)?.toString() ?: (baseUrl + chapter.url)
 
     override fun fetchChapterList(manga: SManga): Observable<List<SChapter>> {
         if (!manga.url.contains("#")) {
