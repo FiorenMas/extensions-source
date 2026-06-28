@@ -1,7 +1,12 @@
-import keiyoushi.gradle.extensions.baseVersionCode
-
 plugins {
     alias(kei.plugins.multisrc)
 }
 
-baseVersionCode = 40
+keiyoushi {
+    baseVersionCode = 40
+    libVersion = "1.4"
+
+    deeplink {
+        path("/..*/vol..*")
+    }
+}
