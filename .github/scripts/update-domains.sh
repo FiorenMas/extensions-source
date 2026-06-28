@@ -123,7 +123,7 @@ get_main_kt_file_path() {
 
     if [[ -f "$build_file" ]]; then
         local class_name
-        class_name="$(sed -nE "s/^[[:space:]]*extClass[[:space:]]*=[[:space:]]*['\"]\\.([A-Za-z0-9_]+)['\"].*/\\1/p" "$build_file" | head -n1)"
+        class_name="$(sed -nE "s/^[[:space:]]*className[[:space:]]*=[[:space:]]*['\"]([A-Za-z0-9_]+)['\"].*/\\1/p" "$build_file" | head -n1)"
         if [[ -n "$class_name" ]]; then
             local candidate="$source_root/eu/kanade/tachiyomi/extension/vi/$source_name/$class_name.kt"
             if [[ -f "$candidate" ]]; then
@@ -304,6 +304,7 @@ update_build_gradle_url() {
     local new_url="$2"
     [[ -f "$file_path" ]] || return 1
 
+
     if ! grep -Eq '^[[:space:]]*baseUrl[[:space:]]*=[[:space:]]*["'\'']https?://[^"'\''"]+["'\'']' "$file_path"; then
         return 1
     fi
@@ -370,40 +371,18 @@ update_version_code() {
 
     local old_value new_value
 
-    old_value="$(perl -ne 'if (/^\s*extVersionCode\s*=\s*(\d+)/) { print $1; exit }' "$file_path")"
+    # versionCode = 29
+    old_value="$(perl -ne 'if (/^\s*versionCode\s*=\s*(\d+)/) { print $1; exit }' "$file_path")"
     if [[ -n "$old_value" ]]; then
         new_value=$((old_value + 1))
         VERSION_FOUND=1
-        VERSION_MODE="extVersionCode"
+        VERSION_MODE="versionCode"
         VERSION_OLD="$old_value"
         VERSION_NEW="$new_value"
 
         local tmp_file
         tmp_file="$(mktemp)"
-        if ! NEW_NUM="$new_value" perl -0777 -pe 's{(?m)^(\s*extVersionCode\s*=\s*)\d+(\s*(?://.*)?$)}{$1.$ENV{NEW_NUM}.$2}e' "$file_path" > "$tmp_file"; then
-            rm -f "$tmp_file"
-            return 0
-        fi
-
-        if ! cmp -s "$file_path" "$tmp_file"; then
-            cat "$tmp_file" > "$file_path"
-            VERSION_UPDATED=1
-        fi
-        rm -f "$tmp_file"
-        return 0
-    fi
-
-    old_value="$(perl -ne 'if (/^\s*overrideVersionCode\s*=\s*(\d+)/) { print $1; exit }' "$file_path")"
-    if [[ -n "$old_value" ]]; then
-        new_value=$((old_value + 1))
-        VERSION_FOUND=1
-        VERSION_MODE="overrideVersionCode"
-        VERSION_OLD="$old_value"
-        VERSION_NEW="$new_value"
-
-        local tmp_file
-        tmp_file="$(mktemp)"
-        if ! NEW_NUM="$new_value" perl -0777 -pe 's{(?m)^(\s*overrideVersionCode\s*=\s*)\d+(\s*(?://.*)?$)}{$1.$ENV{NEW_NUM}.$2}e' "$file_path" > "$tmp_file"; then
+        if ! NEW_NUM="$new_value" perl -0777 -pe 's{(?m)^(\s*versionCode\s*=\s*)\d+(\s*(?://.*)?$)}{$1.$ENV{NEW_NUM}.$2}e' "$file_path" > "$tmp_file"; then
             rm -f "$tmp_file"
             return 0
         fi
@@ -462,7 +441,7 @@ process_source() {
     local console_file="$4"
 
     local source_dir="$RESOLVED_ROOT/$source_name"
-    local build_file="$source_dir/build.gradle"
+    local build_file="$source_dir/build.gradle.kts"
     local build_content=""
 
     if [[ -f "$build_file" ]]; then
@@ -492,7 +471,7 @@ process_source() {
     fi
 
     if [[ -z "$old_url" ]]; then
-        append_file_line "$detail_file" "[SKIP] $source_name | No URL found in build.gradle or main kt file"
+        append_file_line "$detail_file" "[SKIP] $source_name | No URL found in build.gradle.kts or main kt file"
         append_file_line "$console_file" "[SKIP] $source_name - no URL found"
         return 0
     fi
@@ -514,9 +493,10 @@ process_source() {
     local new_url
     new_url="$(get_new_url_value "$old_url" "$REDIRECT_FINAL_URL")"
     local -a changed_files=()
+    local build_basename="build.gradle.kts"
 
     if update_build_gradle_url "$build_file" "$new_url"; then
-        changed_files+=("build.gradle")
+        changed_files+=("$build_basename")
     fi
 
     if update_kt_url "$target_kt_file" "$old_url" "$new_url"; then
@@ -528,17 +508,17 @@ process_source() {
     if [[ ${#changed_files[@]} -gt 0 ]]; then
         update_version_code "$build_file"
         if [[ "$VERSION_UPDATED" -eq 1 ]]; then
-            if ! array_contains "build.gradle" "${changed_files[@]}"; then
-                changed_files+=("build.gradle")
+            if ! array_contains "$build_basename" "${changed_files[@]}"; then
+                changed_files+=("$build_basename")
             fi
             append_file_line "$detail_file" "[VERSION] $source_name | $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
             append_file_line "$console_file" "[VERSION] $source_name $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
         elif [[ "$VERSION_MODE" == "not-found" ]]; then
-            append_file_line "$detail_file" "[VERSION-WARN] $source_name | build.gradle has no extVersionCode/overrideVersionCode to update"
-            append_file_line "$console_file" "[VERSION-WARN] $source_name - no extVersionCode/overrideVersionCode found"
+            append_file_line "$detail_file" "[VERSION-WARN] $source_name | build.gradle.kts has no versionCode to update"
+            append_file_line "$console_file" "[VERSION-WARN] $source_name - no versionCode found"
         elif [[ "$VERSION_MODE" == "no-build-file" ]]; then
-            append_file_line "$detail_file" "[VERSION-WARN] $source_name | no build.gradle found for version bump"
-            append_file_line "$console_file" "[VERSION-WARN] $source_name - no build.gradle found"
+            append_file_line "$detail_file" "[VERSION-WARN] $source_name | no build.gradle.kts found for version bump"
+            append_file_line "$console_file" "[VERSION-WARN] $source_name - no build.gradle.kts found"
         fi
 
         printf '%s\t%s\t%s\n' "$source_name" "$old_url" "$new_url" >> "$changed_file"
@@ -696,14 +676,15 @@ fi
     echo
     echo "Checklist:"
     echo
-    echo "- [x] Updated \`extVersionCode\` value in \`build.gradle\` for individual extensions"
-    echo "- [x] Updated \`overrideVersionCode\` or \`baseVersionCode\` as needed for all multisrc extensions"
-    echo "- [x] Referenced all related issues in the PR body (e.g. \"Closes #xyz\")"
-    echo "- [ ] Added the \`isNsfw = true\` flag in \`build.gradle\` when appropriate"
+    echo "- [x] Updated \`versionCode\` value in \`build.gradle.kts\`"
+    echo "- [x] Updated \`baseVersionCode\` in \`build.gradle.kts\` (if updated multisrc theme code)"
+    echo "- [ ] Referenced all related issues in the PR body (e.g. \"Closes #xyz\")"
+    echo "- [ ] Set the \`contentWarning\` configuration in \`build.gradle.kts\` appropriately"
     echo "- [x] Have not changed source names"
     echo "- [x] Have explicitly kept the \`id\` if a source's name or language were changed"
     echo "- [x] Have tested the modifications by compiling and running the extension through Android Studio"
     echo "- [ ] Have removed \`web_hi_res_512.png\` when adding a new extension"
+    echo "- [ ] This PR is AI-assisted, I have reviewed the changes manually and confirmed they are not slop"
     echo
     echo "## Details"
     if [[ ${#detail_lines[@]} -eq 0 ]]; then
