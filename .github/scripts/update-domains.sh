@@ -360,7 +360,7 @@ process_source() {
     local -a old_urls=()
     while IFS= read -r u; do
         [[ -n "$u" ]] && old_urls+=("$u")
-    done < <(printf '%s\n' "$build_content" | grep -oP 'baseUrl\s*[=(]\s*["'\'']\Khttps?://[^"'\''']+' || true)
+    done < <(printf '%s\n' "$build_content" | grep -oP 'baseUrl\s*[=(]\s*"\Khttps?://[^"]+' || true)
 
     if [[ ${#old_urls[@]} -eq 0 ]]; then
         append_file_line "$detail_file" "[SKIP] $source_name | No baseUrl found in build.gradle.kts"
