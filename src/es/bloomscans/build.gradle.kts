@@ -4,10 +4,13 @@ plugins {
 
 keiyoushi {
     name = "Bloom Scans"
-    className = "Bloomscans"
-    versionCode = 2
+    versionCode = 3
     contentWarning = ContentWarning.NSFW
     libVersion = "1.4"
     theme = "mangathemesia"
-    baseUrl = "https://bloomscans.com"
+
+    source {
+        lang = "es"
+        baseUrl = "https://bloomscans.com"
+    }
 }

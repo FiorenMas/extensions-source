@@ -4,10 +4,16 @@ plugins {
 
 keiyoushi {
     name = "StellarSaber"
-    className = "StellarSaber"
-    versionCode = 0
+    versionCode = 33
     contentWarning = ContentWarning.SAFE
     libVersion = "1.4"
-    theme = "mangathemesia"
-    baseUrl = "https://stellarsaber.pro"
+
+    source {
+        lang = "ar"
+        baseUrl = "https://stellarsaber.pro"
+    }
+
+    deeplink {
+        path("/.*/..*")
+    }
 }

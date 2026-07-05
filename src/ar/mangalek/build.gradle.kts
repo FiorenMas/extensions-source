@@ -4,10 +4,21 @@ plugins {
 
 keiyoushi {
     name = "Mangalek"
-    className = "Mangalek"
-    versionCode = 9
+    versionCode = 11
     contentWarning = ContentWarning.SAFE
     libVersion = "1.4"
     theme = "madara"
-    baseUrl = "https://lekmanga.net"
+
+    source {
+        name = "مانجا ليك"
+        lang = "ar"
+        baseUrl("https://lek-manga.net") {
+            mirrors = listOf(
+                "https://lekmanga.online",
+                "https://like-manga.net",
+                "https://lekmanga.site",
+                "https://manga-leko.site",
+            )
+        }
+    }
 }
