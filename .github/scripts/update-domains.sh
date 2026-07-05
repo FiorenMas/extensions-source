@@ -94,102 +94,6 @@ check_proxy_connection() {
     return 1
 }
 
-get_first_url_from_text() {
-    local text="$1"
-    printf '%s' "$text" | grep -Eo 'https?://[^[:space:]'"'"'"`"]+' | head -n1 || true
-}
-
-get_url_from_kt_file() {
-    local file_path="$1"
-    [[ -f "$file_path" ]] || return 0
-
-    local line
-    line="$(grep -Eom1 '^[[:space:]]*override[[:space:]]+val[[:space:]]+baseUrl[[:space:]]*=[[:space:]]*"https?://[^"]+"' "$file_path" || true)"
-    if [[ -n "$line" ]]; then
-        printf '%s' "$line" | sed -E 's/.*"(https?:\/\/[^"]+)".*/\1/'
-        return 0
-    fi
-
-    grep -Eo 'https?://[^[:space:]'"'"'"`"]+' "$file_path" | head -n1 || true
-}
-
-get_main_kt_file_path() {
-    local source_dir="$1"
-    local source_name="$2"
-    local build_file="$3"
-
-    local source_root="$source_dir/src"
-    [[ -d "$source_root" ]] || return 0
-
-    if [[ -f "$build_file" ]]; then
-        local class_name
-        class_name="$(sed -nE "s/^[[:space:]]*className[[:space:]]*=[[:space:]]*['\"]([A-Za-z0-9_]+)['\"].*/\\1/p" "$build_file" | head -n1)"
-        if [[ -n "$class_name" ]]; then
-            local candidate="$source_root/eu/kanade/tachiyomi/extension/vi/$source_name/$class_name.kt"
-            if [[ -f "$candidate" ]]; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-
-            local by_name
-            by_name="$(find "$source_root" -type f -name "$class_name.kt" 2>/dev/null | sort | head -n1)"
-            if [[ -n "$by_name" ]]; then
-                printf '%s\n' "$by_name"
-                return 0
-            fi
-        fi
-    fi
-
-    local preferred_dir="$source_root/eu/kanade/tachiyomi/extension/vi/$source_name"
-    if [[ -d "$preferred_dir" ]]; then
-        local preferred_file
-        preferred_file="$(find "$preferred_dir" -maxdepth 1 -type f -name '*.kt' 2>/dev/null | sort | head -n1)"
-        if [[ -n "$preferred_file" ]]; then
-            printf '%s\n' "$preferred_file"
-            return 0
-        fi
-    fi
-
-    local fallback
-    fallback="$(find "$source_root" -type f -name '*.kt' 2>/dev/null | sort | head -n1)"
-    if [[ -n "$fallback" ]]; then
-        printf '%s\n' "$fallback"
-        return 0
-    fi
-}
-
-find_url_in_source_kt_files() {
-    local source_dir="$1"
-    local preferred_file="$2"
-    local source_root="$source_dir/src"
-    [[ -d "$source_root" ]] || return 0
-
-    mapfile -t files < <(find "$source_root" -type f -name '*.kt' 2>/dev/null | sort)
-    [[ ${#files[@]} -gt 0 ]] || return 0
-
-    local -a ordered=()
-    if [[ -n "$preferred_file" && -f "$preferred_file" ]]; then
-        ordered+=("$preferred_file")
-    fi
-
-    local f
-    for f in "${files[@]}"; do
-        if [[ -n "$preferred_file" && "$f" == "$preferred_file" ]]; then
-            continue
-        fi
-        ordered+=("$f")
-    done
-
-    local url
-    for f in "${ordered[@]}"; do
-        url="$(get_url_from_kt_file "$f")"
-        if [[ -n "$url" ]]; then
-            printf '%s\t%s\n' "$url" "$f"
-            return 0
-        fi
-    done
-}
-
 url_base() {
     local url="$1"
     if [[ "$url" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://([^/?#]+) ]]; then
@@ -301,17 +205,16 @@ get_new_url_value() {
 
 update_build_gradle_url() {
     local file_path="$1"
-    local new_url="$2"
+    local old_url="$2"
+    local new_url="$3"
     [[ -f "$file_path" ]] || return 1
 
-
-    if ! grep -Eq '^[[:space:]]*baseUrl[[:space:]]*=[[:space:]]*["'\'']https?://[^"'\''"]+["'\'']' "$file_path"; then
-        return 1
-    fi
+    local escaped_old
+    escaped_old="$(escape_perl_re "$old_url")"
 
     local tmp_file
     tmp_file="$(mktemp)"
-    if ! NEW_URL="$new_url" perl -0777 -pe 's{(?m)^(\s*baseUrl\s*=\s*["'\''])(https?://[^"'\''"]+)(["'\''])}{$1.$ENV{NEW_URL}.$3}e' "$file_path" > "$tmp_file"; then
+    if ! OLD_ESCAPED="$escaped_old" NEW_URL="$new_url" perl -0777 -pe 's/$ENV{OLD_ESCAPED}/$ENV{NEW_URL}/g' "$file_path" > "$tmp_file"; then
         rm -f "$tmp_file"
         return 1
     fi
@@ -326,18 +229,19 @@ update_build_gradle_url() {
     return 0
 }
 
-update_kt_url() {
+update_deeplink_host() {
     local file_path="$1"
-    local old_url="$2"
-    local new_url="$3"
+    local old_host="$2"
+    local new_host="$3"
     [[ -f "$file_path" ]] || return 1
 
-    local escaped_old
-    escaped_old="$(escape_perl_re "$old_url")"
+    if ! grep -q "host(\"$old_host\")" "$file_path"; then
+        return 1
+    fi
 
     local tmp_file
     tmp_file="$(mktemp)"
-    if ! OLD_ESCAPED="$escaped_old" NEW_URL="$new_url" perl -0777 -pe 's/$ENV{OLD_ESCAPED}/$ENV{NEW_URL}/g' "$file_path" > "$tmp_file"; then
+    if ! OLD_HOST="$old_host" NEW_HOST="$new_host" perl -0777 -pe 's/host\("\Q$ENV{OLD_HOST}\E"\)/host("$ENV{NEW_HOST}")/g' "$file_path" > "$tmp_file"; then
         rm -f "$tmp_file"
         return 1
     fi
@@ -442,70 +346,79 @@ process_source() {
 
     local source_dir="$RESOLVED_ROOT/$source_name"
     local build_file="$source_dir/build.gradle.kts"
-    local build_content=""
 
-    if [[ -f "$build_file" ]]; then
-        build_content="$(cat "$build_file" 2>/dev/null || true)"
+    if [[ ! -f "$build_file" ]]; then
+        append_file_line "$detail_file" "[SKIP] $source_name | No build.gradle.kts found"
+        append_file_line "$console_file" "[SKIP] $source_name - no build.gradle.kts"
+        return 0
     fi
 
-    local main_kt_file target_kt_file
-    main_kt_file="$(get_main_kt_file_path "$source_dir" "$source_name" "$build_file")"
-    target_kt_file="$main_kt_file"
+    local build_content
+    build_content="$(cat "$build_file" 2>/dev/null || true)"
 
-    local old_url=""
-    if [[ -n "$build_content" ]]; then
-        old_url="$(printf '%s\n' "$build_content" | sed -nE "s/^[[:space:]]*baseUrl[[:space:]]*=[[:space:]]*['\"](https?:\\/\\/[^'\"]+)['\"].*$/\\1/p" | head -n1)"
+    # Extract ALL baseUrls from build.gradle.kts (handles baseUrl = "..." and baseUrl("...") { ... })
+    local -a old_urls=()
+    while IFS= read -r u; do
+        [[ -n "$u" ]] && old_urls+=("$u")
+    done < <(printf '%s\n' "$build_content" | grep -oP 'baseUrl\s*[=(]\s*["'\'']\Khttps?://[^"'\''']+' || true)
+
+    if [[ ${#old_urls[@]} -eq 0 ]]; then
+        append_file_line "$detail_file" "[SKIP] $source_name | No baseUrl found in build.gradle.kts"
+        append_file_line "$console_file" "[SKIP] $source_name - no baseUrl found"
+        return 0
     fi
 
-    if [[ -z "$old_url" && -n "$main_kt_file" && -f "$main_kt_file" ]]; then
-        old_url="$(get_url_from_kt_file "$main_kt_file")"
-    fi
-
-    if [[ -z "$old_url" ]]; then
-        local fallback_result
-        fallback_result="$(find_url_in_source_kt_files "$source_dir" "$main_kt_file")"
-        if [[ -n "$fallback_result" ]]; then
-            old_url="${fallback_result%%$'\t'*}"
-            target_kt_file="${fallback_result#*$'\t'}"
+    # Deduplicate URLs (multi-source may repeat the same domain)
+    local -A seen_urls=()
+    local -a unique_urls=()
+    local u
+    for u in "${old_urls[@]}"; do
+        if [[ -z "${seen_urls[$u]:-}" ]]; then
+            seen_urls["$u"]=1
+            unique_urls+=("$u")
         fi
-    fi
+    done
 
-    if [[ -z "$old_url" ]]; then
-        append_file_line "$detail_file" "[SKIP] $source_name | No URL found in build.gradle.kts or main kt file"
-        append_file_line "$console_file" "[SKIP] $source_name - no URL found"
-        return 0
-    fi
-
-    if ! resolve_redirect_info "$old_url" "$TIMEOUT_SEC"; then
-        local redirect_error
-        redirect_error="$(single_line_text "$REDIRECT_ERROR")"
-        append_file_line "$detail_file" "[ERROR] $source_name | connect failed for $old_url | $redirect_error"
-        append_file_line "$console_file" "[ERROR] $source_name - $redirect_error"
-        return 0
-    fi
-
-    if [[ "$REDIRECT_REDIRECTED" -ne 1 ]]; then
-        append_file_line "$detail_file" "[NO-REDIRECT] $source_name | $old_url"
-        append_file_line "$console_file" "[NO-REDIRECT] $source_name"
-        return 0
-    fi
-
-    local new_url
-    new_url="$(get_new_url_value "$old_url" "$REDIRECT_FINAL_URL")"
     local -a changed_files=()
     local build_basename="build.gradle.kts"
+    local any_changed=0
 
-    if update_build_gradle_url "$build_file" "$new_url"; then
-        changed_files+=("$build_basename")
-    fi
+    for old_url in "${unique_urls[@]}"; do
+        if ! resolve_redirect_info "$old_url" "$TIMEOUT_SEC"; then
+            local redirect_error
+            redirect_error="$(single_line_text "$REDIRECT_ERROR")"
+            append_file_line "$detail_file" "[ERROR] $source_name | connect failed for $old_url | $redirect_error"
+            append_file_line "$console_file" "[ERROR] $source_name - $redirect_error"
+            continue
+        fi
 
-    if update_kt_url "$target_kt_file" "$old_url" "$new_url"; then
-        local rel_path
-        rel_path="${target_kt_file#"$source_dir"/}"
-        changed_files+=("$rel_path")
-    fi
+        if [[ "$REDIRECT_REDIRECTED" -ne 1 ]]; then
+            append_file_line "$detail_file" "[NO-REDIRECT] $source_name | $old_url"
+            append_file_line "$console_file" "[NO-REDIRECT] $source_name"
+            continue
+        fi
 
-    if [[ ${#changed_files[@]} -gt 0 ]]; then
+        local new_url
+        new_url="$(get_new_url_value "$old_url" "$REDIRECT_FINAL_URL")"
+
+        if update_build_gradle_url "$build_file" "$old_url" "$new_url"; then
+            any_changed=1
+            if ! array_contains "$build_basename" "${changed_files[@]}"; then
+                changed_files+=("$build_basename")
+            fi
+            printf '%s\t%s\t%s\n' "$source_name" "$old_url" "$new_url" >> "$changed_file"
+        fi
+
+        # Update deeplink host to match the new baseurl
+        local old_host new_host
+        old_host="$(host_from_url "$old_url")"
+        new_host="$(host_from_url "$new_url")"
+        if [[ "$old_host" != "$new_host" ]]; then
+            update_deeplink_host "$build_file" "$old_host" "$new_host"
+        fi
+    done
+
+    if [[ "$any_changed" -eq 1 ]]; then
         update_version_code "$build_file"
         if [[ "$VERSION_UPDATED" -eq 1 ]]; then
             if ! array_contains "$build_basename" "${changed_files[@]}"; then
@@ -516,16 +429,12 @@ process_source() {
         elif [[ "$VERSION_MODE" == "not-found" ]]; then
             append_file_line "$detail_file" "[VERSION-WARN] $source_name | build.gradle.kts has no versionCode to update"
             append_file_line "$console_file" "[VERSION-WARN] $source_name - no versionCode found"
-        elif [[ "$VERSION_MODE" == "no-build-file" ]]; then
-            append_file_line "$detail_file" "[VERSION-WARN] $source_name | no build.gradle.kts found for version bump"
-            append_file_line "$console_file" "[VERSION-WARN] $source_name - no build.gradle.kts found"
         fi
 
-        printf '%s\t%s\t%s\n' "$source_name" "$old_url" "$new_url" >> "$changed_file"
         append_file_line "$detail_file" "[CHANGED] $source_name | files: $(IFS=', '; echo "${changed_files[*]}")"
-        append_file_line "$console_file" "[CHANGED] $source_name => $new_url"
+        append_file_line "$console_file" "[CHANGED] $source_name"
     else
-        append_file_line "$detail_file" "[SKIP] $source_name | redirected $old_url -> $new_url but no matching value found to update"
+        append_file_line "$detail_file" "[SKIP] $source_name | redirected but no matching value found to update"
         append_file_line "$console_file" "[SKIP] $source_name - redirected but no file changes"
     fi
 }
