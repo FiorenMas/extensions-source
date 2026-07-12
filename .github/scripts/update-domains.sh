@@ -356,11 +356,11 @@ process_source() {
     local build_content
     build_content="$(cat "$build_file" 2>/dev/null || true)"
 
-    # Extract ALL baseUrls from build.gradle.kts (handles baseUrl = "..." and baseUrl("...") { ... })
+    # Extract ALL baseUrls from build.gradle.kts (handles baseUrl = "...", baseUrl("..."), and custom("...") in baseUrl { } blocks)
     local -a old_urls=()
     while IFS= read -r u; do
         [[ -n "$u" ]] && old_urls+=("$u")
-    done < <(printf '%s\n' "$build_content" | grep -oP 'baseUrl\s*[=(]\s*"\Khttps?://[^"]+' || true)
+    done < <(printf '%s\n' "$build_content" | grep -oP '(?:baseUrl\s*[=(]\s*|custom\()\Khttps?://[^"]+' || true)
 
     if [[ ${#old_urls[@]} -eq 0 ]]; then
         append_file_line "$detail_file" "[SKIP] $source_name | No baseUrl found in build.gradle.kts"
@@ -586,7 +586,7 @@ fi
     echo "Checklist:"
     echo
     echo "- [x] Updated \`versionCode\` value in \`build.gradle.kts\`"
-    echo "- [x] Updated \`baseVersionCode\` in \`build.gradle.kts\` (if updated multisrc theme code)"
+    echo "- [ ] Updated \`baseVersionCode\` in \`build.gradle.kts\` (if updated multisrc theme code)"
     echo "- [ ] Referenced all related issues in the PR body (e.g. \"Closes #xyz\")"
     echo "- [ ] Set the \`contentWarning\` configuration in \`build.gradle.kts\` appropriately"
     echo "- [x] Have not changed source names"
