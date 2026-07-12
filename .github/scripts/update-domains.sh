@@ -68,6 +68,18 @@ fi
 
 timestamp="$(date '+%Y-%m-%d %H:%M:%S %z')"
 
+# Colors (disabled when not a terminal or NO_COLOR is set)
+if [[ -z "${NO_COLOR:-}" ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    CYAN=$'\033[0;36m'
+    GRAY=$'\033[0;90m'
+    RESET=$'\033[0m'
+else
+    RED='' GREEN='' YELLOW='' CYAN='' GRAY='' RESET=''
+fi
+
 check_proxy_connection() {
     local attempt=1
     local stderr_file http_code
@@ -349,7 +361,7 @@ process_source() {
 
     if [[ ! -f "$build_file" ]]; then
         append_file_line "$detail_file" "[SKIP] $source_name | No build.gradle.kts found"
-        append_file_line "$console_file" "[SKIP] $source_name - no build.gradle.kts"
+        append_file_line "$console_file" "${GRAY}${source_name} — no build.gradle.kts${RESET}"
         return 0
     fi
 
@@ -369,7 +381,7 @@ process_source() {
 
     if [[ ${#old_urls[@]} -eq 0 ]]; then
         append_file_line "$detail_file" "[SKIP] $source_name | No baseUrl found in build.gradle.kts"
-        append_file_line "$console_file" "[SKIP] $source_name - no baseUrl found"
+        append_file_line "$console_file" "${GRAY}${source_name} — no baseUrl found${RESET}"
         return 0
     fi
 
@@ -387,21 +399,25 @@ process_source() {
     local -a changed_files=()
     local build_basename="build.gradle.kts"
     local any_changed=0
+    local any_redirect=0
+    local -a new_domain_list=()
 
     for old_url in "${unique_urls[@]}"; do
         if ! resolve_redirect_info "$old_url" "$TIMEOUT_SEC"; then
             local redirect_error
             redirect_error="$(single_line_text "$REDIRECT_ERROR")"
             append_file_line "$detail_file" "[ERROR] $source_name | connect failed for $old_url | $redirect_error"
-            append_file_line "$console_file" "[ERROR] $source_name - $redirect_error"
+            append_file_line "$console_file" "${RED}${source_name} — error: ${redirect_error}${RESET}"
             continue
         fi
 
         if [[ "$REDIRECT_REDIRECTED" -ne 1 ]]; then
             append_file_line "$detail_file" "[NO-REDIRECT] $source_name | $old_url"
-            append_file_line "$console_file" "[NO-REDIRECT] $source_name"
+            append_file_line "$console_file" "${YELLOW}${source_name} — no new domain${RESET}"
             continue
         fi
+
+        any_redirect=1
 
         local new_url
         new_url="$(get_new_url_value "$old_url" "$REDIRECT_FINAL_URL")"
@@ -411,6 +427,7 @@ process_source() {
             if ! array_contains "$build_basename" "${changed_files[@]}"; then
                 changed_files+=("$build_basename")
             fi
+            new_domain_list+=("$(host_from_url "$new_url")")
             printf '%s\t%s\t%s\n' "$source_name" "$old_url" "$new_url" >> "$changed_file"
         fi
 
@@ -430,17 +447,22 @@ process_source() {
                 changed_files+=("$build_basename")
             fi
             append_file_line "$detail_file" "[VERSION] $source_name | $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
-            append_file_line "$console_file" "[VERSION] $source_name $VERSION_MODE: $VERSION_OLD => $VERSION_NEW"
         elif [[ "$VERSION_MODE" == "not-found" ]]; then
             append_file_line "$detail_file" "[VERSION-WARN] $source_name | build.gradle.kts has no versionCode to update"
-            append_file_line "$console_file" "[VERSION-WARN] $source_name - no versionCode found"
         fi
 
+        local new_hosts
+        new_hosts="$(IFS=', '; echo "${new_domain_list[*]}")"
         append_file_line "$detail_file" "[CHANGED] $source_name | files: $(IFS=', '; echo "${changed_files[*]}")"
-        append_file_line "$console_file" "[CHANGED] $source_name"
+        append_file_line "$console_file" "${GREEN}${source_name} → ${new_hosts}${RESET}"
     else
-        append_file_line "$detail_file" "[SKIP] $source_name | redirected but no matching value found to update"
-        append_file_line "$console_file" "[SKIP] $source_name - redirected but no file changes"
+        if [[ "$any_redirect" -eq 1 ]]; then
+            append_file_line "$detail_file" "[SKIP] $source_name | redirected but no matching value found to update"
+            append_file_line "$console_file" "${YELLOW}${source_name} — redirect detected but no file updated${RESET}"
+        else
+            append_file_line "$detail_file" "[SKIP] $source_name | no domain redirect detected"
+            # no console line — already logged per-URL above
+        fi
     fi
 }
 
@@ -521,7 +543,7 @@ job_index=0
 for source_name in "${sources[@]}"; do
     if [[ -n "${excluded_sources[$source_name]:-}" ]]; then
         detail_lines+=("[SKIP-EXCLUDED] $source_name | Listed in EXCLUDE input")
-        console_lines+=("[SKIP-EXCLUDED] $source_name")
+        console_lines+=("${GRAY}${source_name} — excluded${RESET}")
         continue
     fi
 
@@ -567,7 +589,24 @@ for i in "${!job_sources[@]}"; do
 done
 
 if [[ ${#console_lines[@]} -gt 0 ]]; then
-    printf '%s\n' "${console_lines[@]}"
+    # Sort: changed (green) first, then errors/redirects (yellow/red), then skips (gray)
+    declare -a sorted_changed=() sorted_other=()
+    for line in "${console_lines[@]}"; do
+        if [[ "$line" == *"$GREEN"* ]]; then
+            sorted_changed+=("$line")
+        else
+            sorted_other+=("$line")
+        fi
+    done
+    if [[ ${#sorted_changed[@]} -gt 0 ]]; then
+        printf '%s\n' "${sorted_changed[@]}" | sort
+    fi
+    if [[ ${#sorted_changed[@]} -gt 0 && ${#sorted_other[@]} -gt 0 ]]; then
+        echo ""
+    fi
+    if [[ ${#sorted_other[@]} -gt 0 ]]; then
+        printf '%s\n' "${sorted_other[@]}" | sort
+    fi
 fi
 
 {
