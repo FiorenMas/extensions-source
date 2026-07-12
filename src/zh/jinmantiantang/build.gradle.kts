@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -12,7 +14,6 @@ keiyoushi {
         name = "禁漫天堂"
         lang = "zh"
         baseUrl = "https://18comic.vip"
-        skipCodeGen = true
     }
 
     deeplink {

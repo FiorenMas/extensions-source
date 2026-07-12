@@ -1,10 +1,12 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
 
 keiyoushi {
     name = "Manga Livre"
-    versionCode = 72
+    versionCode = 76
     contentWarning = ContentWarning.SAFE
     libVersion = "1.4"
 

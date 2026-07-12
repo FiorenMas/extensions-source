@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -9,8 +11,8 @@ keiyoushi {
     libVersion = "1.4"
 
     source {
-        baseUrl("https://nude-moon.org") {
-            withCustom = true
+        baseUrl {
+            custom("https://nude-moon.org")
         }
         lang = "ru"
     }

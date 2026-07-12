@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -11,8 +13,8 @@ keiyoushi {
 
     source {
         lang = "vi"
-        baseUrl("https://truyenvn.sbs") {
-            withCustom = true
+        baseUrl {
+            custom("https://truyenvn.sbs")
         }
     }
 }

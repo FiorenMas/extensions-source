@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -5,13 +7,13 @@ plugins {
 keiyoushi {
     name = "Ariverse"
     versionCode = 53
-    contentWarning = ContentWarning.NSFW
+    contentWarning = ContentWarning.MIXED
     libVersion = "1.4"
 
     source {
         lang = "vi"
-        baseUrl("https://arigl.xyz") {
-            withCustom = true
+        baseUrl {
+            custom("https://arigl.xyz")
         }
         id = 4480433466073326866
     }

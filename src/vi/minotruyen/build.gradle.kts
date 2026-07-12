@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -5,30 +7,30 @@ plugins {
 keiyoushi {
     name = "MinoTruyen"
     versionCode = 4
-    contentWarning = ContentWarning.NSFW
+    contentWarning = ContentWarning.MIXED
     libVersion = "1.4"
 
     source {
         name = "MinoTruyen Manga"
         lang = "vi"
-        baseUrl("https://minotruyenv5.xyz") {
-            withCustom = true
+        baseUrl {
+            custom("https://minotruyenv5.xyz")
         }
     }
 
     source {
         name = "MinoTruyen Comics"
         lang = "vi"
-        baseUrl("https://minotruyenv5.xyz") {
-            withCustom = true
+        baseUrl {
+            custom("https://minotruyenv5.xyz")
         }
     }
 
     source {
         name = "MinoTruyen Hentai"
         lang = "vi"
-        baseUrl("https://minotruyenv5.xyz") {
-            withCustom = true
+        baseUrl {
+            custom("https://minotruyenv5.xyz")
         }
     }
 }

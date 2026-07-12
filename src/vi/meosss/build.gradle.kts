@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -5,13 +7,13 @@ plugins {
 keiyoushi {
     name = "MeoSSS"
     versionCode = 1
-    contentWarning = ContentWarning.NSFW
+    contentWarning = ContentWarning.MIXED
     libVersion = "1.4"
 
     source {
         lang = "vi"
-        baseUrl("https://meosss.com") {
-            withCustom = true
+        baseUrl {
+            custom("https://meosss.com")
         }
     }
 }

@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -9,8 +11,11 @@ keiyoushi {
     libVersion = "1.4"
 
     source {
-        baseUrl("https://ru.com-x.life") {
-            withCustom = true
+        baseUrl {
+            mirrors(
+                "Россия" to "https://ru.com-x.life",
+                "Публичный" to "https://com-x.life",
+            )
         }
         lang = "ru"
         id = 1114173092141608635L

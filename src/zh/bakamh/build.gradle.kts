@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -12,8 +14,8 @@ keiyoushi {
     source {
         name = "巴卡漫画"
         lang = "zh"
-        baseUrl("https://bakamh.com") {
-            withCustom = true
+        baseUrl {
+            custom("https://bakamh.com")
         }
     }
 }

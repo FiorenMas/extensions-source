@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -10,8 +12,8 @@ keiyoushi {
 
     source {
         lang = "id"
-        baseUrl("https://doujin.desu.xxx") {
-            withCustom = true
+        baseUrl {
+            custom("https://doujin.desu.xxx")
         }
         id = 7704282043609669342L
     }

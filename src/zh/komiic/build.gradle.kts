@@ -1,3 +1,5 @@
+import io.github.keiyoushi.gradle.api.ContentWarning
+
 plugins {
     alias(kei.plugins.extension)
 }
@@ -11,8 +13,9 @@ keiyoushi {
     source {
         lang = "zh"
 
-        baseUrl("https://komiic.com") {
-            mirrors = listOf(
+        baseUrl {
+            mirrors(
+                "https://komiic.com",
                 "https://komiic.cc",
             )
         }
