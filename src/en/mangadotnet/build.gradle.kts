@@ -6,9 +6,9 @@ plugins {
 
 keiyoushi {
     name = "Mangadotnet"
-    versionCode = 13
+    versionCode = 15
     contentWarning = ContentWarning.MIXED
-    libVersion = "1.4"
+    libVersion = "1.6"
 
     source {
         lang = "en"

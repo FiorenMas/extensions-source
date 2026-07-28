@@ -26,7 +26,6 @@ import io.github.keiyoushi.gradle.tasks.GenerateKeepRulesTask
 import io.github.keiyoushi.gradle.tasks.GenerateManifestTask
 import io.github.keiyoushi.gradle.tasks.GenerateSourceInfoTask
 import io.github.keiyoushi.gradle.tasks.SignExtensionJarTask
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -249,6 +248,7 @@ class ExtensionPlugin : Plugin<Project> {
             addProvider("implementation", keiyoushi.theme.map { project(":lib-multisrc:$it") })
             implementation(project(":core"))
             compileOnly(libs.bundles.common)
+            compileOnly(keiyoushi.libVersion.flatMap { if (it == "1.6") libs.tachiyomi.lib.v16 else libs.tachiyomi.lib.v14 })
             ksp(project(":compiler"))
         }
 
@@ -288,18 +288,26 @@ class ExtensionPlugin : Plugin<Project> {
                     mirrorUrls = source.baseUrl.mirrors.map { it.url },
                 )
             }
-            val extensionInfo = ExtensionMetadata(
-                packageName = packageName,
-                name = extName,
-                versionCode = versionCodeProvider.get(),
-                versionName = versionNameProvider.get(),
-                extensionLib = keiyoushi.libVersion.get(),
-                // Proto keiyoushi.gradle.api.ContentWarning: UNSPECIFIED=0, SAFE=1, MIXED=2, NSFW=3 (enum ordinal + 1).
-                contentWarning = keiyoushi.contentWarning.get().ordinal + 1,
-                sources = sourceInfos,
-            )
-            val sourceInfoJson = Json.encodeToString(extensionInfo)
-            sourceInfoTask.configure { content.set(sourceInfoJson) }
+            // Proto keiyoushi.gradle.api.ContentWarning: UNSPECIFIED=0, SAFE=1, MIXED=2, NSFW=3 (enum ordinal + 1).
+            val contentWarningOrdinal = keiyoushi.contentWarning.get().ordinal + 1
+            val libVersionValue = keiyoushi.libVersion.get()
+
+            val sourceInfoJsonProvider = versionCodeProvider.zip(versionNameProvider) { code, name ->
+                Json.encodeToString(
+                    ExtensionMetadata(
+                        module = applicationIdSuffix,
+                        theme = keiyoushi.theme.orNull,
+                        packageName = packageName,
+                        name = extName,
+                        versionCode = code,
+                        versionName = name,
+                        extensionLib = libVersionValue,
+                        contentWarning = contentWarningOrdinal,
+                        sources = sourceInfos,
+                    ),
+                )
+            }
+            sourceInfoTask.configure { content.set(sourceInfoJsonProvider) }
             tasks.named("assembleRelease").configure { dependsOn(sourceInfoTask) }
 
             tasks.withType<PackageAndroidArtifact>().configureEach {

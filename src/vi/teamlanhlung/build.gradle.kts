@@ -6,15 +6,19 @@ plugins {
 
 keiyoushi {
     name = "Team Lanh Lung"
-    versionCode = 33
+    versionCode = 35
     contentWarning = ContentWarning.MIXED
-    libVersion = "1.4"
+    libVersion = "1.6"
 
     source {
         name = "Team Lạnh Lùng"
         lang = "vi"
         baseUrl {
-            custom("https://icecoldcore.com")
+            custom("https://lanhlungteam1.top")
         }
+    }
+
+    deeplink {
+        path("/.*")
     }
 }
