@@ -14,7 +14,7 @@ keiyoushi {
         name = "Team Lạnh Lùng"
         lang = "vi"
         baseUrl {
-            custom("https://lanhlungteam1.top")
+            custom("https://lanhlungteam2.top")
         }
     }
 
