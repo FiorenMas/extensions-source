@@ -1,6 +1,5 @@
 package keiyoushi.utils
 
-import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -512,10 +511,12 @@ fun <T> Response.extractNextJs(
     deserializer: DeserializationStrategy<T>,
 ): T? {
     val contentType = header("Content-Type") ?: ""
-    return when {
-        "text/x-component" in contentType -> body.string().extractNextJsRsc(predicate, deserializer)
-        "text/html" in contentType -> asJsoup().extractNextJs(predicate, deserializer)
-        else -> error("Unsupported Content-Type for Next.js extraction: $contentType")
+    return use {
+        when {
+            "text/x-component" in contentType -> body.string().extractNextJsRsc(predicate, deserializer)
+            "text/html" in contentType -> asJsoup().extractNextJs(predicate, deserializer)
+            else -> error("Unsupported Content-Type for Next.js extraction: $contentType")
+        }
     }
 }
 
