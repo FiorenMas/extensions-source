@@ -45,7 +45,7 @@ abstract class Kagane :
     ConfigurableSource {
 
     private val kaganeLangs: List<String>
-        get() = if (lang == "zh") listOf("zh-Hans", "zh-Hant") else listOf(lang)
+        get() = listOf(lang)
 
     private val domain get() = baseUrl.removePrefix("https://")
     private val apiUrl get() = "https://$domain/api/v2"
@@ -201,6 +201,9 @@ abstract class Kagane :
                     }
 
                     is SourcesFilter -> {
+                        if (filter.state.count { it.state } > MAX_SOURCE_FILTER) {
+                            throw Exception("Select at most $MAX_SOURCE_FILTER sources in the Sources filter")
+                        }
                         filter.addToJsonObject(this)
                     }
 
@@ -264,31 +267,41 @@ abstract class Kagane :
         fetchChapters: Boolean,
     ): SMangaUpdate {
         val seriesId = manga.url
-        val dto = getMangaById(seriesId)
 
-        val updatedManga = parseMangaDetails(dto).apply {
-            if (!dto.trackerId.isNullOrEmpty()) {
-                memo = buildJsonObject {
-                    put("trackerId", dto.trackerId)
+        val updatedManga = if (fetchDetails) {
+            val dto = getMangaById(seriesId)
+            parseMangaDetails(dto).apply {
+                if (!dto.trackerId.isNullOrEmpty()) {
+                    memo = buildJsonObject {
+                        put("trackerId", dto.trackerId)
+                    }
                 }
             }
+        } else {
+            manga
         }
-        val updatedChapters = parseChapterList(dto, seriesId)
+        val updatedChapters = if (fetchChapters) {
+            val index = client.get("$apiUrl/series/$seriesId/books/index?fields=List")
+                .parseAs<BookIndexDto>()
+            parseChapterList(index.toBooks(), updatedManga.genre?.substringBefore(", "), seriesId)
+        } else {
+            chapters
+        }
 
         return SMangaUpdate(updatedManga, updatedChapters)
     }
 
-    private fun parseChapterList(details: DetailsDto, seriesId: String): List<SChapter> {
-        val useSourceChapterNumber = details.format in setOf(
+    private fun parseChapterList(books: List<ChapterDto.Book>, format: String?, seriesId: String): List<SChapter> {
+        val useSourceChapterNumber = format in setOf(
             "Dark Horse Comics",
             "Flame Comics",
             "MangaDex",
             "Square Enix Manga",
         )
 
-        return details.seriesBooks.map { book ->
+        return books.sortedByDescending { it.number }.map { book ->
             book.toSChapter(seriesId, useSourceChapterNumber, chapterTitleMode)
-        }.reversed()
+        }
     }
 
     override fun getChapterUrl(chapter: SChapter): String = "$baseUrl${chapter.url}"
@@ -488,6 +501,7 @@ abstract class Kagane :
     // ============================= Utilities ==============================
 
     companion object {
+        private const val MAX_SOURCE_FILTER = 50
         private const val CONTENT_RATING = "pref_content_rating"
         private const val CONTENT_RATING_DEFAULT = "pornographic"
         internal val CONTENT_RATINGS = arrayOf(
