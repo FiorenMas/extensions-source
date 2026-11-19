@@ -135,7 +135,8 @@ class Filters(
         Filter.Separator(),
         DemographicFilter(getDemographics(), selectedDemographics),
         StatusFilter(),
-        MinChapterFilter(),
+        ChapterLengthFilter("Minimum Chapter Length", "min_chap"),
+        ChapterLengthFilter("Maximum Chapter Length", "max_chap"),
         Filter.Separator(),
         Filter.Header("Release Year"),
         YearFromFilter(),
@@ -207,16 +208,16 @@ class Filters(
         PreferenceFilter {
         override fun addToUri(builder: HttpUrl.Builder) {
             state.filter { it.state == TriState.STATE_INCLUDE }
-                .forEach { builder.addQueryParameter("demographics[]", it.value) }
+                .forEach { builder.addQueryParameter("demos", it.value) }
             state.filter { it.state == TriState.STATE_EXCLUDE }
-                .forEach { builder.addQueryParameter("genres_ex[]", it.value) }
+                .forEach { builder.addQueryParameter("genres_ex", it.value) }
         }
     }
 
     private class TypeFilter(selectedValues: Set<String>) :
         UriMultiSelectFilter(
             "Type",
-            "types[]",
+            "types",
             getTypes(),
             selectedValues,
             true,
@@ -242,9 +243,9 @@ class Filters(
 
         override fun addToUri(builder: HttpUrl.Builder) {
             state.filter { it.state == TriState.STATE_INCLUDE }
-                .forEach { builder.addQueryParameter("genres_in[]", it.value) }
+                .forEach { builder.addQueryParameter("genres_in", it.value) }
             state.filter { it.state == TriState.STATE_EXCLUDE }
-                .forEach { builder.addQueryParameter("genres_ex[]", it.value) }
+                .forEach { builder.addQueryParameter("genres_ex", it.value) }
         }
     }
 
@@ -261,7 +262,7 @@ class Filters(
     private class StatusFilter :
         UriMultiSelectFilter(
             "Status",
-            "statuses[]",
+            "statuses",
             arrayOf(
                 Pair("Releasing", "releasing"),
                 Pair("Finished", "finished"),
@@ -322,16 +323,16 @@ class Filters(
         }
     }
 
-    private class MinChapterFilter :
-        Filter.Text("Minimum Chapter Length"),
+    private class ChapterLengthFilter(name: String, private val param: String) :
+        Filter.Text(name),
         UriFilter {
         override fun addToUri(builder: HttpUrl.Builder) {
             if (state.isNotEmpty()) {
                 val value = state.toIntOrNull()?.takeIf { it > 0 }
                     ?: throw IllegalArgumentException(
-                        "Minimum chapter length must be a positive integer greater than 0",
+                        "$name must be a positive integer greater than 0",
                     )
-                builder.addQueryParameter("min_chap", value.toString())
+                builder.addQueryParameter(param, value.toString())
             }
         }
     }
@@ -375,7 +376,7 @@ class Filters(
                 }
                 val value = if (state!!.ascending) "asc" else "desc"
 
-                builder.addQueryParameter("order[$order]", value)
+                builder.addQueryParameter("sort", "$order:$value")
             }
         }
     }

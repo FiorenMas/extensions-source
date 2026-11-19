@@ -5,15 +5,17 @@ plugins {
 }
 
 keiyoushi {
-    name = "MiuRaw"
-    versionCode = 2
+    name = "RawNaver"
+    versionCode = 5
     contentWarning = ContentWarning.MIXED
     libVersion = "1.6"
     pkgName = "ja.rawxz"
 
     source {
         lang = "ja"
-        baseUrl = "https://miuraw.com"
+        baseUrl {
+            custom("https://rawnaver.com")
+        }
         id = 7950551186567193810L
     }
 }

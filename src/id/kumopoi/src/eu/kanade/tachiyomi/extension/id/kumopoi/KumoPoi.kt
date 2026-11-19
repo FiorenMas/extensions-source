@@ -7,17 +7,18 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
-import keiyoushi.utils.hmacSha256
+import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.toJsonElement
 import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.net.URLEncoder
-import java.util.Random
 import kotlin.time.Duration.Companion.seconds
 
 @Source
@@ -87,7 +88,7 @@ abstract class KumoPoi : KeiSource() {
             }
         }.build()
 
-        val response = client.get(url).parseAs<ComicListResponse>()
+        val response = client.get(url, Fetch.XHR).parseAs<ComicListResponse>()
         return MangasPage(response.items.map { it.toSManga() }, response.hasNextPage)
     }
 
@@ -98,7 +99,7 @@ abstract class KumoPoi : KeiSource() {
         fetchChapters: Boolean,
     ): SMangaUpdate {
         val slug = getComicSlug(manga.url)
-        val response = client.get("$API_BASE/comics/$slug").parseAs<ComicDetailsResponse>()
+        val response = client.get("$API_BASE/comics/$slug", Fetch.XHR).parseAs<ComicDetailsResponse>()
         return SMangaUpdate(response.data.toSManga(), response.data.toSChapterList())
     }
 
@@ -107,18 +108,17 @@ abstract class KumoPoi : KeiSource() {
             throw Exception("Please refresh chapter list")
         }
         val chapterId = chapter.url.substringAfterLast("#")
-        val path = "/api/v1/chapters/$chapterId/pages"
-        val timestamp = (System.currentTimeMillis() / 1000).toString()
-        val nonce = generateNonce(16)
-        val signature = generateSignature(path, timestamp, nonce)
 
         val pageHeaders = headersBuilder()
-            .add("x-app-timestamp", timestamp)
-            .add("x-app-nonce", nonce)
-            .add("x-app-signature", signature)
+            .set("Referer", getChapterUrl(chapter))
             .build()
 
-        val response = client.get("$API_BASE_HOST$path", pageHeaders).parseAs<PagesResponse>()
+        val response = client.get(
+            "$baseUrl/api/reader/$chapterId/pages",
+            pageHeaders,
+            Fetch.XHR,
+        ).parseAs<PagesResponse>()
+
         if (response.data.locked) {
             throw Exception("Chapter terkunci (Premium)")
         }
@@ -135,7 +135,10 @@ abstract class KumoPoi : KeiSource() {
         return "$baseUrl/comic/$slug"
     }
 
-    override fun getChapterUrl(chapter: SChapter): String = "$baseUrl${chapter.url.substringBeforeLast("#")}"
+    override fun getChapterUrl(chapter: SChapter): String {
+        val chapterId = chapter.url.substringAfterLast("#")
+        return "$baseUrl${chapter.url.substringBeforeLast("/")}/$chapterId"
+    }
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         val segment = url.pathSegments.getOrNull(0) ?: return null
@@ -147,28 +150,27 @@ abstract class KumoPoi : KeiSource() {
 
     private fun getComicSlug(url: String): String = url.trimEnd('/').substringAfterLast('/')
 
-    override fun getFilterList(data: JsonElement?): FilterList = FilterList(
-        SortFilter(),
-        TypeFilter(),
-        StatusFilter(),
-        GenreFilter(),
+    override suspend fun fetchFilterData() = client.get("$baseUrl/comics", Fetch.DOCUMENT)
+        .extractNextJs<Genres>()!!
+        .toJsonElement()
+
+    override val supportsFilterFetching = true
+
+    override fun getFilterList(data: JsonElement?) = FilterList(
+        buildList {
+            add(SortFilter())
+            add(TypeFilter())
+            add(StatusFilter())
+
+            val genres = data?.parseAs<Genres>()?.genres.orEmpty()
+            if (genres.isNotEmpty()) {
+                add(GenreFilter(genres.map { Genre(it.name, it.slug) }))
+            }
+        },
     )
 
-    private fun generateNonce(length: Int): String {
-        val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-        val random = Random()
-        return (1..length).map { chars[random.nextInt(chars.length)] }.joinToString("")
-    }
-
-    private fun generateSignature(path: String, timestamp: String, nonce: String): String {
-        val message = "GET:$path:$timestamp:$nonce"
-        return message.hmacSha256(SIGNING_KEY.encodeToByteArray()).toHexString()
-    }
-
     companion object {
-        private const val API_BASE_HOST = "https://api.kumopoi.com"
         private const val API_BASE = "https://api.kumopoi.com/api/v1"
-        private const val SIGNING_KEY = "vtm6RLiSyKmWd1YpZtkt5ue4oPdYdmzW0ZgxDgyBNEM="
         private const val PAGE_LIMIT = 20
     }
 }

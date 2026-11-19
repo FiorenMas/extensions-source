@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.parseAs
@@ -25,7 +26,6 @@ abstract class ZonatmoTo : KeiSource() {
 
     private val baseHost get() = baseUrl.toHttpUrl().host
 
-    private val cdnUrl get() = "https://cdn.$baseHost"
     private val apiUrl get() = "https://$baseHost/wp-api/api".toHttpUrl()
     private val uploadsUrl get() = "https://$baseHost/wp-content/uploads".toHttpUrl()
 
@@ -37,7 +37,7 @@ abstract class ZonatmoTo : KeiSource() {
             .addQueryParameter("postType", "any")
             .addQueryParameter("postsPerPage", "50")
             .build()
-        val mangas = client.get(url).parseAs<TopViewsResponseDto>().data?.items.orEmpty().mapNotNull {
+        val mangas = client.get(url, Fetch.XHR).parseAs<TopViewsResponseDto>().data?.items.orEmpty().mapNotNull {
             it.toSManga()
         }
         return MangasPage(mangas, false)
@@ -50,14 +50,14 @@ abstract class ZonatmoTo : KeiSource() {
     // ========================= Search =========================
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
-        if (url.host != baseHost) return null
-        val mangaSlug = url.pathSegments.getOrNull(1) ?: return null
+        if (url.host.removePrefix("www.") !in MIRROR_HOSTS || url.pathSegments[0] != "manga") return null
+        val mangaSlug = url.pathSegments.getOrNull(1)?.ifEmpty { null } ?: return null
 
-        return fetchMangaUpdate(
+        return getMangaUpdate(
             SManga.create().apply { this.url = mangaSlug },
             emptyList(),
-            true,
-            false,
+            fetchDetails = true,
+            fetchChapters = false,
         ).manga
     }
 
@@ -83,7 +83,7 @@ abstract class ZonatmoTo : KeiSource() {
             addQueryParameter("search", it)
         } ?: addQueryParameter("orderBy", "post_modified")
     }.let {
-        parseSearch(client.get(it.build()))
+        parseSearch(client.get(it.build(), Fetch.XHR))
     }
 
     private fun parseSearch(response: Response): MangasPage {
@@ -114,7 +114,7 @@ abstract class ZonatmoTo : KeiSource() {
 
         val updatedManga = async {
             if (fetchDetails) {
-                client.get(mangaUrl).parseAs<SingleMangaResponseDto>()
+                client.get(mangaUrl, Fetch.XHR).parseAs<SingleMangaResponseDto>()
                     .data
                     ?.toSManga()
                     ?: throw Exception("Unable to parse manga details")
@@ -150,13 +150,13 @@ abstract class ZonatmoTo : KeiSource() {
     }
 
     private suspend fun getChapters(url: HttpUrl, mangaSlug: String): List<SChapter> = coroutineScope {
-        val firstPageDto = client.get(url).parseAs<ChapterListResponseDto>()
+        val firstPageDto = client.get(url, Fetch.XHR).parseAs<ChapterListResponseDto>()
         val totalPages = firstPageDto.data?.pagination?.totalPages ?: 1
 
         val nextItems = (2..totalPages).map { page ->
             async {
                 val pageUrl = url.newBuilder().setQueryParameter("page", "$page").build()
-                client.get(pageUrl)
+                client.get(pageUrl, Fetch.XHR)
                     .parseAs<ChapterListResponseDto>()
                     .data?.items.orEmpty()
             }
@@ -179,6 +179,7 @@ abstract class ZonatmoTo : KeiSource() {
 
         val chapterData = client.get(
             "$apiUrl/single/manga/$mangaSlug/$chapterSlug",
+            Fetch.XHR,
         ).parseAs<SingleChapterResponseDto>().data?.chapter
             ?: throw Exception("Unable to parse chapter pages")
 
@@ -202,7 +203,7 @@ abstract class ZonatmoTo : KeiSource() {
 
     // ========================= Utilities =========================
 
-    private fun cdnImageUrl(jit: String, imageName: String): String = cdnUrl.toHttpUrl().newBuilder()
+    private fun cdnImageUrl(jit: String, imageName: String): String = CDN_URL.newBuilder()
         .addPathSegment("manga")
         .addPathSegments(jit)
         .addPathSegment(imageName)
@@ -264,5 +265,9 @@ abstract class ZonatmoTo : KeiSource() {
     companion object {
         private const val CHAPTERS_PER_PAGE = 50
         private val dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        private val MIRROR_HOSTS = setOf("zonatmo.to", "otakuteca.net")
+
+        // otakuteca.net loads its pages from zonatmo.to's CDN too
+        private val CDN_URL = "https://cdn.zonatmo.to".toHttpUrl()
     }
 }

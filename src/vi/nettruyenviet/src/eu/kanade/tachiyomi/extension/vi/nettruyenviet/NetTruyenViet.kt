@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
@@ -17,6 +18,7 @@ import keiyoushi.utils.tryParseDateTime
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonElement
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
@@ -39,7 +41,7 @@ abstract class NetTruyenViet : KeiSource() {
             .addQueryParameter("sort", "10")
             .addQueryParameter("page", page.toString())
             .build()
-        return parseMangaPage(client.get(url).asJsoup())
+        return parseMangaPage(client.get(url, Fetch.DOCUMENT).asJsoup())
     }
 
     private fun parseMangaPage(document: Document): MangasPage {
@@ -66,20 +68,11 @@ abstract class NetTruyenViet : KeiSource() {
     // ============================== Latest ================================
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val url = "$baseUrl/".toHttpUrl().newBuilder()
+        // The root is now a landing page without the list
+        val url = "$baseUrl/truyen-tranh-moi".toHttpUrl().newBuilder()
             .addQueryParameter("page", page.toString())
             .build()
-        val document = client.get(url).asJsoup()
-
-        val latestSection = document.selectFirst(
-            "div.items:has(h1.page-title:matchesOwn(NetTruyen\\s*-\\s*Truyện tranh online))",
-        )
-        val mangaElements = latestSection?.select("div.row > div.item")
-            ?: document.select("div.items div.row > div.item")
-
-        val mangaList = mangaElements.map(::mangaFromElement)
-
-        return MangasPage(mangaList, hasNextPage(document))
+        return parseMangaPage(client.get(url, Fetch.DOCUMENT).asJsoup())
     }
 
     // ============================== Search ================================
@@ -90,7 +83,7 @@ abstract class NetTruyenViet : KeiSource() {
                 .addQueryParameter("keyword", query)
                 .addQueryParameter("page", page.toString())
                 .build()
-            return parseMangaPage(client.get(url).asJsoup())
+            return parseMangaPage(client.get(url, Fetch.DOCUMENT).asJsoup())
         }
 
         val genrePath = filters.firstInstanceOrNull<GenreFilter>()?.toUriPart()
@@ -107,7 +100,16 @@ abstract class NetTruyenViet : KeiSource() {
             addQueryParameter("page", page.toString())
         }.build()
 
-        return parseMangaPage(client.get(url).asJsoup())
+        return parseMangaPage(client.get(url, Fetch.DOCUMENT).asJsoup())
+    }
+
+    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
+        if ((url.host != baseUrl.toHttpUrl().host && url.host !in SITE_HOSTS) || url.pathSegments.firstOrNull() != "truyen-tranh") {
+            return null
+        }
+        val slug = url.pathSegments.getOrNull(1)?.ifEmpty { null } ?: return null
+        val manga = SManga.create().apply { this.url = "/truyen-tranh/$slug" }
+        return getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
     }
 
     // ============================== Details ===============================
@@ -124,7 +126,7 @@ abstract class NetTruyenViet : KeiSource() {
     }
 
     private suspend fun fetchMangaDetails(manga: SManga): SManga {
-        val infoElement = client.get(getMangaUrl(manga)).asJsoup().selectFirst("article#item-detail")!!
+        val infoElement = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asJsoup().selectFirst("article#item-detail")!!
 
         return manga.apply {
             title = infoElement.selectFirst("h1.title-detail, h1")!!.text()
@@ -173,7 +175,7 @@ abstract class NetTruyenViet : KeiSource() {
             .add("X-Requested-With", "XMLHttpRequest")
             .build()
 
-        val chapterItems = client.get(url, chapterHeaders).parseAs<ChapterListDto>().toChapterItems(slug)
+        val chapterItems = client.get(url, chapterHeaders, Fetch.XHR).parseAs<ChapterListDto>().toChapterItems(slug)
         return chapterItems.map { chapterItem ->
             SChapter.create().apply {
                 name = chapterItem.name
@@ -209,14 +211,14 @@ abstract class NetTruyenViet : KeiSource() {
     // ============================== Pages =================================
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {
-        val imageUrls = client.get(getChapterUrl(chapter)).asJsoup()
+        val imageUrls = client.get(getChapterUrl(chapter), Fetch.DOCUMENT).asJsoup()
             .select("#chapter-content img, .reading-detail .page-chapter img, .chapter-content img, .page-chapter img")
             .map { imageElement ->
                 imageElement.absUrl("data-src")
                     .ifEmpty { imageElement.absUrl("data-original") }
                     .ifEmpty { imageElement.absUrl("src") }
             }
-            .filterNot { it.isEmpty() || NETTRUYEN_LOGO_URL_REGEX.containsMatchIn(it) }
+            .filterNot { it.isEmpty() || SITE_IMAGES_PATH in it }
 
         if (imageUrls.isEmpty()) {
             throw Exception("Không tìm thấy hình ảnh")
@@ -236,9 +238,21 @@ abstract class NetTruyenViet : KeiSource() {
 
     companion object {
         private val RELATIVE_DATE_NUMBER_REGEX = Regex("\\d+")
-        private val NETTRUYEN_LOGO_URL_REGEX = Regex("/assets/images/nettruyenviet\\.webp", RegexOption.IGNORE_CASE)
+
+        // The site's logo or notice image, placed before or after the pages depending on the domain
+        private const val SITE_IMAGES_PATH = "/assets/images/"
         private const val NEXT_PAGE_SYMBOL = "›"
         private val VN_ZONE = ZoneId.of("Asia/Ho_Chi_Minh")
         private val chapterDateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
+
+        // The site serves the same pages on these domains, so their links open with the chosen base URL
+        private val SITE_HOSTS = setOf(
+            "nettruyenviet10.com",
+            "www.nettruyenviet10.com",
+            "nettruyenviet11.com",
+            "www.nettruyenviet11.com",
+            "hinettruyen.com",
+            "www.hinettruyen.com",
+        )
     }
 }

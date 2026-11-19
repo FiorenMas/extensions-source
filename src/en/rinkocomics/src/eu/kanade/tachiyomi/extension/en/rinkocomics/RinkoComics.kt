@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.en.rinkocomics
 
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -11,6 +12,7 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
+import keiyoushi.network.Fetch
 import keiyoushi.network.get
 import keiyoushi.network.post
 import keiyoushi.source.KeiSource
@@ -38,7 +40,7 @@ abstract class RinkoComics :
     private val preferences by getPreferencesLazy()
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val document = client.get(baseUrl).asJsoup()
+        val document = client.get(baseUrl, Fetch.DOCUMENT).asJsoup()
 
         val entries = document.select(".comics-flex-pinned a.pinned-comic-card").mapNotNull { card ->
             val url = card.attr("abs:href").trim()
@@ -60,7 +62,7 @@ abstract class RinkoComics :
             .addQueryParameter(SORT_PARAM, SortFilter.OPTIONS.first().second)
             .build()
 
-        return parseComicsPage(client.get(url).asJsoup())
+        return parseComicsPage(client.get(url, Fetch.DOCUMENT).asJsoup())
     }
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
@@ -86,7 +88,7 @@ abstract class RinkoComics :
             }
         }
 
-        return parseComicsPage(client.get(url.build()).asJsoup())
+        return parseComicsPage(client.get(url.build(), Fetch.DOCUMENT).asJsoup())
     }
 
     override suspend fun fetchMangaUpdate(
@@ -95,7 +97,7 @@ abstract class RinkoComics :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = client.get(getMangaUrl(manga)).asJsoup()
+        val document = client.get(getMangaUrl(manga), Fetch.DOCUMENT).asJsoup()
         val updatedManga = parseMangaDetails(document).apply { url = manga.url }
 
         if (!fetchChapters) return SMangaUpdate(updatedManga, chapters)
@@ -171,11 +173,11 @@ abstract class RinkoComics :
             throw Exception("This chapter is locked. Use WebView to purchase it.")
         }
 
-        val document = client.get(getChapterUrl(chapter)).asJsoup()
-        val pages = document.select("img.chapter-image").mapIndexedNotNull { index, element ->
-            val imageUrl = element.attr("abs:data-src").ifBlank { element.attr("abs:src") }.trim()
-            if (imageUrl.isBlank()) return@mapIndexedNotNull null
-            Page(index, imageUrl = imageUrl)
+        val document = client.get(getChapterUrl(chapter), Fetch.DOCUMENT).asJsoup()
+        val payload = document.selectFirst("script#cwPages")?.data()?.trim()
+            ?: return emptyList()
+        val pages = decodePages(payload).mapIndexed { index, url ->
+            Page(index, imageUrl = url)
         }
 
         if (pages.isEmpty()) {
@@ -188,7 +190,7 @@ abstract class RinkoComics :
     override val supportsFilterFetching get() = true
 
     override suspend fun fetchFilterData(): JsonElement {
-        val document = client.get(comicsUrl(1).build()).asJsoup()
+        val document = client.get(comicsUrl(1).build(), Fetch.DOCUMENT).asJsoup()
 
         return document.select(".ac-filter-group.ac-genre input[name='genres[]']")
             .mapNotNull { input ->
@@ -263,7 +265,7 @@ abstract class RinkoComics :
 
             SChapter.create().apply {
                 setUrlWithoutDomain(url)
-                this.name = name?.trim().orEmpty()
+                this.name = name.trim()
                 date_upload = dateFormat.tryParseDate(dateText)
 
                 if (locked) {
@@ -301,7 +303,7 @@ abstract class RinkoComics :
         val xhrHeaders = headers.newBuilder()
             .add("X-Requested-With", "XMLHttpRequest")
             .build()
-        val result = client.post("$baseUrl/wp-admin/admin-ajax.php", xhrHeaders, formBody).parseAs<AjaxResponse>()
+        val result = client.post("$baseUrl/wp-admin/admin-ajax.php", xhrHeaders, Fetch.XHR, formBody).parseAs<AjaxResponse>()
         if (!result.success) return emptyList()
 
         val html = result.data?.html.orEmpty()
@@ -309,6 +311,14 @@ abstract class RinkoComics :
 
         val doc = Jsoup.parseBodyFragment(html)
         return parseChapterElements(doc.select(CHAPTER_SELECTOR), hideLocked)
+    }
+
+    private fun decodePages(payload: String): List<String> {
+        val raw = Base64.decode(payload, Base64.DEFAULT)
+
+        return ByteArray(raw.size - 16) { i ->
+            ((raw[i + 16].toInt() and 0xFF) xor (raw[i % 16].toInt() and 0xFF)).toByte()
+        }.toString(Charsets.UTF_8).parseAs()
     }
 
     private fun extractNonce(document: Document): String? {

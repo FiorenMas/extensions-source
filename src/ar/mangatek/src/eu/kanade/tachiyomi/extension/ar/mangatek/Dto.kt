@@ -2,9 +2,12 @@ package eu.kanade.tachiyomi.extension.ar.mangatek
 
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.time.Instant
 
 @Serializable
@@ -30,7 +33,7 @@ class MangaData(
         this.url = url
         title = this@MangaData.title
         description = this@MangaData.description
-        genre = tags.map { it.name }.joinToString()
+        genre = tags.joinToString { it.name }
         thumbnail_url = cover
         status = when (this@MangaData.status) {
             "ongoing" -> SManga.ONGOING
@@ -103,7 +106,9 @@ class Bubble(
 
 @Serializable
 class ChapterProps(
-    val imageUrls: List<String> = emptyList(),
+    val imageUrls: List<JsonElement> = emptyList(),
+    val mangaSlug: String? = null,
+    val chapterRef: String? = null,
     val overlayBlob: String? = null,
     val overlayPageOffset: Int? = null,
     val textMode: String? = null,
@@ -112,13 +117,74 @@ class ChapterProps(
 )
 
 @Serializable
+class ReaderImage(
+    val url: String,
+    val isTrap: Boolean = false,
+    val pending: Boolean = false,
+)
+
+// Entries are a plain url, or an object marking a pending page or an off-screen decoy
+fun List<JsonElement>.toReaderImages() = map {
+    if (it is JsonPrimitive) ReaderImage(it.content) else it.parseAs<ReaderImage>()
+}
+
+@Serializable
+class PagesRequest(
+    private val chapterId: Long,
+    private val mangaSlug: String,
+    private val chapterNumber: String,
+    private val token: String,
+    private val proof: String,
+)
+
+@Serializable
+class PagesResponse(
+    val data: List<JsonElement>,
+)
+
+@Serializable
 class UnlockRequest(
     private val chapterId: Long,
     private val token: String,
     private val proof: String,
     private val esid: String,
+    private val fpc: Fpc,
     private val nonce: String? = null,
     private val pow: String? = null,
+    private val turnstileToken: String? = null,
+)
+
+@Serializable
+class Fpc(
+    private val v: Int,
+    private val ua: String,
+    private val lang: String,
+    private val platform: String,
+    private val cores: Int,
+    private val mem: Int,
+    private val touch: Int,
+    private val tz: String,
+    private val tzOffset: Int,
+    private val screen: String,
+    private val avail: String,
+    private val dpr: Double,
+    private val canvas: String,
+    private val webgl: String,
+    private val app: FpcApp,
+)
+
+@Serializable
+class FpcApp(
+    private val webdriver: Boolean,
+    private val vendor: String,
+    private val plugins: Int,
+    private val pdfViewer: Boolean,
+    private val chromeObj: String,
+    private val androidBridge: Boolean,
+    private val flutter: Boolean,
+    private val reactNative: Boolean,
+    private val webkitHandlers: Boolean,
+    private val standalone: Boolean,
 )
 
 @Serializable
@@ -129,4 +195,23 @@ class UnlockResponse(
     @SerialName("needs_challenge") val needsChallenge: Boolean = false,
     val nonce: String? = null,
     @SerialName("pow_bits") val powBits: Int? = null,
+    @SerialName("turnstile_required") val turnstileRequired: Boolean = false,
+    val denied: Boolean = false,
+)
+
+@Serializable
+class Signals(
+    private val ua: String,
+    private val lang: String,
+    private val platform: String,
+    private val cores: Int,
+    private val mem: Int,
+    private val touch: Int,
+    private val tz: String,
+    private val tzOffset: Int,
+    private val screen: String,
+    private val avail: String,
+    private val dpr: Double,
+    private val canvas: String,
+    private val webgl: String,
 )
